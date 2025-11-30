@@ -13,6 +13,21 @@
     "authors": ["keyiflerolsun"],
     "apiVersion": 1,
     "repositoryUrl": "https://github.com/ahmetokan0101/eklentilerim"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/ahmetokan0101/eklentilerim/main/DiziPal.cs3",
+    "status": 1,
+    "version": 1,
+    "internalName": "DiziPal",
+    "name": "DiziPal",
+    "language": "tr",
+    "tvTypes": ["TvSeries", "Movie"],
+    "fileSize": 19318,
+    "iconUrl": "https://www.google.com/s2/favicons?domain=dizipal1220.com&sz=%size%",
+    "description": "DiziPal tüm yabancı dizileri ve filmleri ücretsiz olarak Türkçe Dublaj ve altyazılı seçenekleri ile 1080P kalite izleyebileceğiniz yeni nesil dizi ve film izleme siteniz.",
+    "authors": ["keyiflerolsun"],
+    "apiVersion": 1,
+    "repositoryUrl": "https://github.com/ahmetokan0101/eklentilerim"
   }
 ]
 
