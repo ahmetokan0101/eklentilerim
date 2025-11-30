@@ -32,11 +32,10 @@
       "TvSeries",
       "Movie"
     ],
-    "version": 1,
+    "version": 2,
     "internalName": "DiziPal",
     "description": "DiziPal tüm yabancı dizileri ve filmleri ücretsiz olarak Türkçe Dublaj ve altyazılı seçenekleri ile 1080P kalite izleyebileceğiniz yeni nesil dizi ve film izleme siteniz.",
     "url": "https://raw.githubusercontent.com/ahmetokan0101/eklentilerim/main/DiziPal.cs3",
     "name": "DiziPal"
   }
 ]
-
