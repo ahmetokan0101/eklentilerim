@@ -1,33 +1,42 @@
 [
   {
-    "url": "https://raw.githubusercontent.com/ahmetokan0101/eklentilerim/main/Dizilla.cs3",
+    "iconUrl": "https://www.google.com/s2/favicons?domain=dizilla.club&sz=%size%",
+    "apiVersion": 1,
+    "repositoryUrl": "https://github.com/ahmetokan0101/eklentilerim",
+    "fileSize": 26801,
     "status": 1,
+    "language": "tr",
+    "authors": [
+      "keyiflerolsun"
+    ],
+    "tvTypes": [
+      "TvSeries"
+    ],
     "version": 39,
     "internalName": "Dizilla",
-    "name": "Dizilla",
-    "language": "tr",
-    "tvTypes": ["TvSeries"],
-    "fileSize": 26801,
-    "iconUrl": "https://www.google.com/s2/favicons?domain=dizilla.club&sz=%size%",
     "description": "Dizilla tüm yabancı dizileri ücretsiz olarak Türkçe Dublaj ve altyazılı seçenekleri ile 1080P kalite izleyebileceğiniz yeni nesil yabancı dizi izleme siteniz.",
-    "authors": ["keyiflerolsun"],
-    "apiVersion": 1,
-    "repositoryUrl": "https://github.com/ahmetokan0101/eklentilerim"
+    "url": "https://raw.githubusercontent.com/ahmetokan0101/eklentilerim/main/Dizilla.cs3",
+    "name": "Dizilla"
   },
   {
-    "url": "https://raw.githubusercontent.com/ahmetokan0101/eklentilerim/main/DiziPal.cs3",
+    "iconUrl": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://dizipal1220.com&size=128",
+    "apiVersion": 1,
+    "repositoryUrl": "https://github.com/ahmetokan0101/eklentilerim",
+    "fileSize": 19318,
     "status": 1,
+    "language": "tr",
+    "authors": [
+      "keyiflerolsun"
+    ],
+    "tvTypes": [
+      "TvSeries",
+      "Movie"
+    ],
     "version": 1,
     "internalName": "DiziPal",
-    "name": "DiziPal",
-    "language": "tr",
-    "tvTypes": ["TvSeries", "Movie"],
-    "fileSize": 19318,
-    "iconUrl": "https://www.google.com/s2/favicons?domain=dizipal1220.com&sz=%size%",
     "description": "DiziPal tüm yabancı dizileri ve filmleri ücretsiz olarak Türkçe Dublaj ve altyazılı seçenekleri ile 1080P kalite izleyebileceğiniz yeni nesil dizi ve film izleme siteniz.",
-    "authors": ["keyiflerolsun"],
-    "apiVersion": 1,
-    "repositoryUrl": "https://github.com/ahmetokan0101/eklentilerim"
+    "url": "https://raw.githubusercontent.com/ahmetokan0101/eklentilerim/main/DiziPal.cs3",
+    "name": "DiziPal"
   }
 ]
 
