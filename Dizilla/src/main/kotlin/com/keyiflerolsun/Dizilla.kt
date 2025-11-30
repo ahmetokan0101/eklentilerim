@@ -126,36 +126,62 @@ class Dizilla : MainAPI() {
                 }
             }
         } else if (request.data.contains("/arsiv")) {
+            // /arsiv için önce JSON parsing dene, başarısız olursa HTML parsing kullan
             val response = app.get("${request.data}?page=$page", interceptor = interceptor)
             val document = response.document
     
             val script = document.selectFirst("script#__NEXT_DATA__")?.data()
-                ?: return newHomePageResponse(request.name, emptyList())
             
-            val objectMapper = ObjectMapper().registerModule(KotlinModule.Builder().build())
-            objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
-    
-            val secureData = objectMapper.readTree(script)
-                .get("props")?.get("pageProps")?.get("secureData")?.asText()
-                ?: return newHomePageResponse(request.name, emptyList())
-    
-            val decodedData = decryptDizillaResponse(secureData)
-                ?: return newHomePageResponse(request.name, emptyList())
-    
-            val json = objectMapper.readTree(decodedData)
-            val relatedResults = json.get("RelatedResults") ?: return newHomePageResponse(request.name, emptyList())
-            val discoverArchive = relatedResults.get("getDiscoverArchive") ?: return newHomePageResponse(request.name, emptyList())
-            val resultArray = discoverArchive.get("result") ?: return newHomePageResponse(request.name, emptyList())
-    
-            resultArray.mapNotNull {
-                val title = it.get("title")?.asText() ?: return@mapNotNull null
-                val slug = it.get("slug")?.asText() ?: return@mapNotNull null
-                val poster = fixUrlNull(it.get("poster")?.asText())
-    
-                newTvSeriesSearchResponse(title, fixUrl("/$slug"), TvType.TvSeries) {
-                    this.posterUrl = poster
+            if (script != null) {
+                try {
+                    val objectMapper = ObjectMapper().registerModule(KotlinModule.Builder().build())
+                    objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+        
+                    val secureData = objectMapper.readTree(script)
+                        .get("props")?.get("pageProps")?.get("secureData")?.asText()
+        
+                    if (secureData != null) {
+                        val decodedData = decryptDizillaResponse(secureData)
+        
+                        if (decodedData != null) {
+                            val json = objectMapper.readTree(decodedData)
+                            val relatedResults = json.get("RelatedResults")
+                            
+                            if (relatedResults != null) {
+                                val discoverArchive = relatedResults.get("getDiscoverArchive")
+                                
+                                if (discoverArchive != null) {
+                                    val resultArray = discoverArchive.get("result")
+                                    
+                                    if (resultArray != null && resultArray.isArray) {
+                                        val jsonResults = resultArray.mapNotNull {
+                                            val title = it.get("title")?.asText() ?: return@mapNotNull null
+                                            val slug = it.get("slug")?.asText() ?: return@mapNotNull null
+                                            val poster = fixUrlNull(it.get("poster")?.asText())
+                
+                                            newTvSeriesSearchResponse(title, fixUrl("/$slug"), TvType.TvSeries) {
+                                                this.posterUrl = poster
+                                            }
+                                        }
+                                        
+                                        if (jsonResults.isNotEmpty()) {
+                                            return newHomePageResponse(request.name, jsonResults)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("Dizilla", "JSON parsing failed for arsiv: ${e.message}")
                 }
             }
+            
+            // JSON parsing başarısız olduysa HTML parsing kullan
+            // HTML'de diziler span.watchlistitem- içinde veya benzeri yapıda olabilir
+            document.select("span.watchlistitem-").mapNotNull { it.diziler() }
+                .takeIf { it.isNotEmpty() }
+                ?: document.select("div.grid a[href^='/dizi/']").mapNotNull { it.yeniEklenenler() }
         } else {
             // /tum-bolumler için önce JSON parsing dene, başarısız olursa HTML parsing kullan
             val response = app.get("${request.data}?page=$page", interceptor = interceptor)
