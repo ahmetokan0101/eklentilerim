@@ -1,0 +1,9 @@
+{
+  "name": "Dizilla Repository",
+  "description": "Dizilla plugin repository",
+  "manifestVersion": 1,
+  "pluginLists": [
+    "https://raw.githubusercontent.com/ahmetokan0101/eklentilerim/main/plugins.json"
+  ]
+}
+
