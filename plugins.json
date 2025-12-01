@@ -37,5 +37,25 @@
     "description": "DiziPal tüm yabancı dizileri ve filmleri ücretsiz olarak Türkçe Dublaj ve altyazılı seçenekleri ile 1080P kalite izleyebileceğiniz yeni nesil dizi ve film izleme siteniz.",
     "url": "https://raw.githubusercontent.com/ahmetokan0101/eklentilerim/main/DiziPal.cs3",
     "name": "DiziPal"
+  },
+  {
+    "iconUrl": "https://www.google.com/s2/favicons?domain=dizilife.net&sz=%size%",
+    "apiVersion": 1,
+    "repositoryUrl": "https://github.com/ahmetokan0101/eklentilerim",
+    "fileSize": 21000,
+    "status": 1,
+    "language": "tr",
+    "authors": [
+      "keyiflerolsun"
+    ],
+    "tvTypes": [
+      "TvSeries",
+      "Movie"
+    ],
+    "version": 1,
+    "internalName": "DiziLife",
+    "description": "DiziLife yabancı dizi ve filmleri Türkçe dublaj ve altyazı seçenekleriyle 1080P kalitede izleyebileceğiniz geniş içerik arşivine sahip bir platformdur.",
+    "url": "https://raw.githubusercontent.com/ahmetokan0101/eklentilerim/main/DiziLife.cs3",
+    "name": "DiziLife"
   }
 ]
