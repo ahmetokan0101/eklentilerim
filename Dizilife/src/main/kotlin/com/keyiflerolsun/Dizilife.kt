@@ -9,9 +9,9 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 
-class Temel : MainAPI() {
+class Dizilife : MainAPI() {
     override var mainUrl              = "https://dizi25.life"
-    override var name                 = "Temel"
+    override var name                 = "Dizilife"
     override val hasMainPage          = true
     override var lang                 = "tr"
     override val hasQuickSearch       = false
