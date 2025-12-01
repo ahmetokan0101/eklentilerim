@@ -39,7 +39,7 @@
     "name": "DiziPal"
   },
   {
-    "iconUrl": "https://www.google.com/s2/favicons?domain=dizilife.net&sz=%size%",
+    "iconUrl": "https://www.google.com/s2/favicons?domain=dizi25.life&sz=%size%",
     "apiVersion": 1,
     "repositoryUrl": "https://github.com/ahmetokan0101/eklentilerim",
     "fileSize": 21000,
@@ -52,10 +52,10 @@
       "TvSeries",
       "Movie"
     ],
-    "version": 1,
-    "internalName": "DiziLife",
-    "description": "DiziLife yabancı dizi ve filmleri Türkçe dublaj ve altyazı seçenekleriyle 1080P kalitede izleyebileceğiniz geniş içerik arşivine sahip bir platformdur.",
+    "version": 0,
+    "internalName": "Dizilife",
+    "description": "Dizi25.life sitemizde, donma yaşamadan Türkçe dublaj ve altyazılı filmleri ile dizileri muhteşem 1080p full HD kalitesinde izleyebilirsiniz.",
     "url": "https://raw.githubusercontent.com/ahmetokan0101/eklentilerim/main/Dizilife.cs3",
-    "name": "DiziLife"
+    "name": "Dizilife"
   }
 ]
