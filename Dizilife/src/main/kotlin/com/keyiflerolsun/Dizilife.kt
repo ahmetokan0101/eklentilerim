@@ -2,12 +2,17 @@
 
 package com.keyiflerolsun
 
+import android.util.Base64
 import android.util.Log
 import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
+import java.security.MessageDigest
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 class Dizilife : MainAPI() {
     override var mainUrl              = "https://dizi25.life"
@@ -18,7 +23,7 @@ class Dizilife : MainAPI() {
     override val supportedTypes       = setOf(TvType.TvSeries, TvType.Movie)
 
     override val mainPage = mainPageOf(
-        "${mainUrl}/tur/aksiyon/"     to "Aksssssiyon",
+        "${mainUrl}/tur/aksiyon/"     to "Aksiyon",
         "${mainUrl}/tur/komedi/"      to "Komedi",
         "${mainUrl}/tur/dram/"        to "Dram",
         "${mainUrl}/tur/bilim-kurgu/" to "Bilim Kurgu",
@@ -220,15 +225,19 @@ class Dizilife : MainAPI() {
                 val epEpisode = it.attr("data-episode-number").toIntOrNull()
                 val epEpisodeId = it.attr("data-episode-id")
                 
-                // URL oluştur: episode-id ile veya base URL + season/episode
+                // URL oluştur: JavaScript'teki format: /dizi/{slug}/{season}-sezon-{episode}-bolum/{episodeId}
                 val slug = url.substringAfter("/dizi/").substringBefore("?")
                 val epHref = when {
                     epEpisodeId.isNotEmpty() && epSeason != null && epEpisode != null -> {
-                        // Episode ID, season ve episode varsa: /dizi/{slug}/sezon-{season}/bolum-{episode}
-                        fixUrlNull("${mainUrl}/dizi/${slug}/sezon-${epSeason}/bolum-${epEpisode}")
+                        // Doğru format: /dizi/{slug}/{season}-sezon-{episode}-bolum/{episodeId}
+                        fixUrlNull("${mainUrl}/dizi/${slug}/${epSeason}-sezon-${epEpisode}-bolum/${epEpisodeId}")
+                    }
+                    epSeason != null && epEpisode != null && epEpisodeId.isNotEmpty() -> {
+                        // Fallback: aynı format
+                        fixUrlNull("${mainUrl}/dizi/${slug}/${epSeason}-sezon-${epEpisode}-bolum/${epEpisodeId}")
                     }
                     epSeason != null && epEpisode != null -> {
-                        // Season ve episode varsa, URL oluştur
+                        // Episode ID yoksa eski format
                         fixUrlNull("${mainUrl}/dizi/${slug}/sezon-${epSeason}/bolum-${epEpisode}")
                     }
                     epEpisodeId.isNotEmpty() -> {
@@ -403,9 +412,54 @@ class Dizilife : MainAPI() {
             }
         }
 
-        // 6. Tüm bulunan iframe'leri işle
+        // 6. Player sayfalarından gerçek stream URL'lerini çıkar
+        val allStreamUrls = mutableListOf<String>()
+        for (iframe in iframes) {
+            if (iframe.isNotEmpty()) {
+                Log.d("STF", "Player iframe işleniyor » $iframe")
+                val streams = extractStreamFromPlayer(iframe)
+                allStreamUrls.addAll(streams)
+            }
+        }
+        
+        // 7. Bulunan stream URL'lerini direkt callback'e gönder
+        if (allStreamUrls.isNotEmpty()) {
+            Log.d("STF", "${allStreamUrls.size} gerçek stream URL bulundu")
+            for (streamUrl in allStreamUrls) {
+                if (streamUrl.contains(".m3u8", ignoreCase = true)) {
+                    callback.invoke(
+                        newExtractorLink(
+                            source = name,
+                            name = name,
+                            url = streamUrl,
+                            type = ExtractorLinkType.M3U8
+                        ) {
+                            this.headers = mapOf("Referer" to "${mainUrl}/")
+                            this.quality = Qualities.Unknown.value
+                        }
+                    )
+                } else if (streamUrl.contains(".mp4", ignoreCase = true) || streamUrl.contains(".mpd", ignoreCase = true)) {
+                    callback.invoke(
+                        newExtractorLink(
+                            source = name,
+                            name = name,
+                            url = streamUrl,
+                            type = if (streamUrl.contains(".mpd", ignoreCase = true)) ExtractorLinkType.DASH else ExtractorLinkType.VIDEO
+                        ) {
+                            this.headers = mapOf("Referer" to "${mainUrl}/")
+                            this.quality = Qualities.Unknown.value
+                        }
+                    )
+                }
+            }
+            if (allStreamUrls.isNotEmpty()) {
+                return true
+            }
+        }
+        
+        // 8. Stream URL bulunamazsa iframe'leri loadExtractor'a gönder
         if (iframes.isNotEmpty()) {
-            Log.d("STF", "${iframes.size} iframe bulundu")
+            Log.d("STF", "${iframes.size} iframe bulundu, loadExtractor'a gönderiliyor")
             for (iframe in iframes) {
                 if (iframe.isNotEmpty()) {
                     Log.d("STF", "iframe işleniyor » $iframe")
@@ -417,5 +471,161 @@ class Dizilife : MainAPI() {
 
         Log.d("STF", "iframe bulunamadı")
         return false
+    }
+
+    // ========== OPENSSL AES DECRYPT ==========
+    private fun md5(bytes: ByteArray): ByteArray {
+        return MessageDigest.getInstance("MD5").digest(bytes)
+    }
+
+    private fun evpBytesToKey(passphrase: ByteArray, salt: ByteArray, keyLen: Int, ivLen: Int): Pair<ByteArray, ByteArray> {
+        val totalLen = keyLen + ivLen
+        val result = mutableListOf<ByteArray>()
+        var prev = byteArrayOf()
+        
+        while (result.sumOf { it.size } < totalLen) {
+            val data = prev + passphrase + salt
+            prev = md5(data)
+            result.add(prev)
+        }
+        
+        val derived = result.fold(byteArrayOf()) { acc, bytes -> acc + bytes }
+        val key = derived.copyOfRange(0, keyLen)
+        val iv = derived.copyOfRange(keyLen, keyLen + ivLen)
+        
+        return Pair(key, iv)
+    }
+
+    private fun opensslAesPassphraseDecrypt(base64Cipher: String, passphrase: String): String? {
+        return try {
+            val cipherData = Base64.decode(base64Cipher, Base64.DEFAULT)
+            val salted = "Salted__".toByteArray(Charsets.UTF_8)
+            
+            if (cipherData.size >= 16 && cipherData.copyOfRange(0, 8).contentEquals(salted)) {
+                val salt = cipherData.copyOfRange(8, 16)
+                val enc = cipherData.copyOfRange(16, cipherData.size)
+                val passphraseBytes = passphrase.toByteArray(Charsets.UTF_8)
+                
+                val (key, iv) = evpBytesToKey(passphraseBytes, salt, 32, 16)
+                val skey = SecretKeySpec(key, "AES")
+                val ivSpec = IvParameterSpec(iv)
+                val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+                cipher.init(Cipher.DECRYPT_MODE, skey, ivSpec)
+                val plain = cipher.doFinal(enc)
+                
+                String(plain, Charsets.UTF_8)
+            } else {
+                null
+            }
+        } catch (e: Throwable) {
+            Log.e("Dizilife", "decrypt error: ${e.message}")
+            null
+        }
+    }
+
+    private suspend fun extractStreamFromPlayer(playerUrl: String): List<String> {
+        val streamUrls = mutableListOf<String>()
+        
+        try {
+            val playerDoc = app.get(playerUrl, referer = playerUrl).document
+            val scripts = playerDoc.select("script")
+            
+            for (script in scripts) {
+                val scriptContent = script.data() ?: script.html()
+                if (scriptContent.isEmpty()) continue
+                
+                // C.A.dct("...", "...") pattern'i ara
+                val decryptPattern = Regex("""C\.A\.dct\(["']([^"']+)["'],\s*["']([^"']+)["']\)""")
+                val matches = decryptPattern.findAll(scriptContent)
+                
+                for (match in matches) {
+                    val encryptedStr = match.groupValues[1]
+                    val passphrase = match.groupValues[2]
+                    
+                    Log.d("STF", "Şifreli string bulundu, decrypt ediliyor...")
+                    val decrypted = opensslAesPassphraseDecrypt(encryptedStr, passphrase)
+                    
+                    if (decrypted != null) {
+                        Log.d("STF", "Decrypt başarılı, stream URL'leri aranıyor...")
+                        
+                        // Replace pattern'i kontrol et
+                        val replacePattern = Regex("""\.replace\(["']([^"']+)["'],\s*["']([^"']+)["']\)""")
+                        val replaceMatch = replacePattern.find(scriptContent, match.range.last)
+                        val finalDecrypted = if (replaceMatch != null) {
+                            val oldStr = replaceMatch.groupValues[1]
+                            val newStr = replaceMatch.groupValues[2]
+                            decrypted.replace(oldStr, newStr)
+                        } else {
+                            decrypted
+                        }
+                        
+                        // Stream URL'lerini ara (m3u8, mp4, mpd)
+                        val urlPatterns = listOf(
+                            Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""", RegexOption.IGNORE_CASE),
+                            Regex("""https?://[^\s"'<>]+\.mp4[^\s"'<>]*""", RegexOption.IGNORE_CASE),
+                            Regex("""https?://[^\s"'<>]+\.mpd[^\s"'<>]*""", RegexOption.IGNORE_CASE),
+                            Regex("""src=["'](https?://[^"']+)["']""", RegexOption.IGNORE_CASE),
+                            Regex("""iframe[^>]+src=["'](https?://[^"']+)["']""", RegexOption.IGNORE_CASE)
+                        )
+                        
+                        for (pattern in urlPatterns) {
+                            val urlMatches = pattern.findAll(finalDecrypted)
+                            for (urlMatch in urlMatches) {
+                                val url = urlMatch.groupValues.getOrNull(1) ?: urlMatch.value
+                                if (url.isNotEmpty() && url.startsWith("http")) {
+                                    streamUrls.add(url)
+                                    Log.d("STF", "Stream URL bulundu: $url")
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // document.write içinde de olabilir
+                val writePattern = Regex("""document\.write\([^)]*C\.A\.dct\(["']([^"']+)["'],\s*["']([^"']+)["']\)""", RegexOption.DOT_MATCHES_ALL)
+                val writeMatches = writePattern.findAll(scriptContent)
+                
+                for (match in writeMatches) {
+                    val encryptedStr = match.groupValues[1]
+                    val passphrase = match.groupValues[2]
+                    
+                    val decrypted = opensslAesPassphraseDecrypt(encryptedStr, passphrase)
+                    if (decrypted != null) {
+                        // Replace pattern'i kontrol et
+                        val replacePattern = Regex("""\.replace\(["']([^"']+)["'],\s*["']([^"']+)["']\)""")
+                        val replaceMatch = replacePattern.find(scriptContent, match.range.last)
+                        val finalDecrypted = if (replaceMatch != null) {
+                            val oldStr = replaceMatch.groupValues[1]
+                            val newStr = replaceMatch.groupValues[2]
+                            decrypted.replace(oldStr, newStr)
+                        } else {
+                            decrypted
+                        }
+                        
+                        // Stream URL'lerini ara
+                        val urlPatterns = listOf(
+                            Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""", RegexOption.IGNORE_CASE),
+                            Regex("""https?://[^\s"'<>]+\.mp4[^\s"'<>]*""", RegexOption.IGNORE_CASE),
+                            Regex("""https?://[^\s"'<>]+\.mpd[^\s"'<>]*""", RegexOption.IGNORE_CASE)
+                        )
+                        
+                        for (pattern in urlPatterns) {
+                            val urlMatches = pattern.findAll(finalDecrypted)
+                            for (urlMatch in urlMatches) {
+                                val url = urlMatch.value
+                                if (url.isNotEmpty()) {
+                                    streamUrls.add(url)
+                                    Log.d("STF", "Stream URL bulundu: $url")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("STF", "Player sayfası işlenirken hata: ${e.message}")
+        }
+        
+        return streamUrls.distinct()
     }
 }
