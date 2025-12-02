@@ -494,21 +494,42 @@ class Dizipal : MainAPI() {
         // Öneriler: Eski selector'ları koruyoruz (varsa)
         val recommendations = document.select("div.srelacionados article").mapNotNull { it.toRecommendationResult() }
         
-        // Oyuncular: Yeni yapıda .movie-actors .actor-item .name veya a[title]
+        // Oyuncular: Yeni yapıda .movie-actors .actor-item .name veya a[title] - resim URL'i ile birlikte
         val actors = document.select(".movie-actors a[href*='/oyuncu/']").mapNotNull {
             val name = it.selectFirst(".actor-item .name")?.text()?.trim()
                 ?: it.selectFirst(".name")?.text()?.trim()
                 ?: it.attr("title").takeIf { it.isNotBlank() }
-            if (name != null && name.isNotBlank()) Actor(name) else null
+            
+            if (name == null || name.isBlank()) return@mapNotNull null
+            
+            // Oyuncu resmi: a tag'i içindeki img'den al
+            val imageUrl = it.selectFirst("img")?.let { img ->
+                fixUrlNull(img.attr("data-src").takeIf { it.isNotBlank() }
+                    ?: img.attr("src"))
+            }
+            
+            Actor(name, imageUrl)
         }.ifEmpty {
             document.select(".movie-actors .actor-item .name").mapNotNull {
                 val name = it.text().trim()
-                if (name.isNotBlank()) Actor(name) else null
+                if (name.isBlank()) return@mapNotNull null
+                
+                // Oyuncu resmi: parent'a bak (a tag'i veya li)
+                val parent = it.parent()?.parent()
+                val imageUrl = parent?.selectFirst("img")?.let { img ->
+                    fixUrlNull(img.attr("data-src").takeIf { it.isNotBlank() }
+                        ?: img.attr("src"))
+                }
+                
+                Actor(name, imageUrl)
             }
         }.ifEmpty {
             document.select("span.valor a").mapNotNull { 
                 val name = it.text().trim()
-                if (name.isNotBlank()) Actor(name) else null
+                if (name.isBlank()) return@mapNotNull null
+                
+                // Eski yapıda resim yoksa null
+                Actor(name)
             }
         }
         
