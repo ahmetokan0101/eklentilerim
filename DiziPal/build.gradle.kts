@@ -1,9 +1,9 @@
-version = 35
+version = 0
 
 cloudstream {
-    authors     = listOf("keyiflerolsun", "muratcesmecioglu")
+    authors     = listOf("keyiflerolsun")
     language    = "tr"
-    description = "en yeni dizileri güvenli ve hızlı şekilde sunar."
+    description = "Dizipal sitemizde, donma yaşamadan Türkçe dublaj ve altyazılı filmleri ile dizileri muhteşem 1080p full HD kalitesinde izleyebilirsiniz."
 
     /**
      * Status int as the following:
@@ -13,6 +13,6 @@ cloudstream {
      * 3: Beta only
     **/
     status  = 1 // will be 3 if unspecified
-    tvTypes = listOf("TvSeries", "Movie")
-    iconUrl = "https://www.google.com/s2/favicons?domain=https://dizipal952.com&sz=%size%"
+    tvTypes = listOf("Movie", "TvSeries")
+    iconUrl = "https://www.google.com/s2/favicons?domain=dizipal1515.com&sz=%size%"
 }
