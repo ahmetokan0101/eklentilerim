@@ -8,6 +8,8 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
+import com.fasterxml.jackson.annotation.JsonProperty
+import org.jsoup.Jsoup
 
 class Dizipal : MainAPI() {
     override var mainUrl              = "https://dizipal1515.com/"
@@ -17,12 +19,58 @@ class Dizipal : MainAPI() {
     override val hasQuickSearch       = false
     override val supportedTypes       = setOf(TvType.Movie, TvType.TvSeries)
 
+    // Kategori ID'leri - API'den içerik çekmek için
+    private val kategoriIdMap = mapOf(
+        "aile" to "20",
+        "aksiyon" to "13",
+        "aksiyon-macera" to "27",
+        "animasyon" to "19",
+        "belgesel" to "12",
+        "bilim-kurgu" to "17",
+        "bilim-kurgu-fantazi" to "28",
+        "biyografi" to "2",
+        "cocuklar" to "31",
+        "comedy" to "33",
+        "dram" to "4",
+        "drama" to "34",
+        "fantastik" to "21",
+        "game-show" to "9",
+        "gerceklik" to "26",
+        "gerilim" to "15",
+        "gizem" to "7",
+        "haberler" to "24",
+        "kisa" to "14",
+        "komedi" to "3",
+        "korku" to "22",
+        "macera" to "18",
+        "muzik" to "10",
+        "muzikal" to "23",
+        "reality-tv" to "11",
+        "romance" to "37",
+        "romantik" to "8",
+        "savas" to "16",
+        "savas-politik" to "30",
+        "spor" to "25",
+        "suc" to "1",
+        "talk" to "32",
+        "talk-show" to "5",
+        "tarih" to "6",
+        "thriller" to "36",
+        "western" to "29"
+    )
+
     override val mainPage = mainPageOf(
         "${mainUrl}"                to "Öne Çıkanlar",
-        "${mainUrl}/tur/aile/"      to "Aile",
-        "${mainUrl}/tur/aksiyon/"   to "Aksiyon",
-        "${mainUrl}/tur/animasyon/" to "Animasyon",
-        "${mainUrl}/tur/belgesel/"  to "Belgesel"
+        "kategori:aile"             to "Aile",
+        "kategori:aksiyon"          to "Aksiyon",
+        "kategori:animasyon"        to "Animasyon",
+        "kategori:belgesel"         to "Belgesel",
+        "kategori:komedi"           to "Komedi",
+        "kategori:korku"            to "Korku",
+        "kategori:dram"             to "Dram",
+        "kategori:gerilim"          to "Gerilim",
+        "kategori:bilim-kurgu"      to "Bilim Kurgu",
+        "kategori:macera"           to "Macera"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -34,9 +82,26 @@ class Dizipal : MainAPI() {
                         url == mainUrl.trimEnd('/') || 
                         url == "${mainUrl.trimEnd('/')}/"
         
+        // Kategori sayfası kontrolü (kategori:xxx formatı)
+        val isKategoriPage = url.startsWith("kategori:")
+        val kategoriKey = if (isKategoriPage) {
+            url.substringAfter("kategori:")
+        } else {
+            null
+        }
+        
         // Öne Çıkanlar için sayfalama yok, sadece ilk sayfayı göster
         if (isHomePage && page > 1) {
             return newHomePageResponse(request.name, emptyList())
+        }
+        
+        // Kategori sayfasıysa API'yi kullan
+        if (isKategoriPage && kategoriKey != null) {
+            val kategoriId = kategoriIdMap[kategoriKey]
+            if (kategoriId != null) {
+                val results = getCategoryContent(kategoriId, page)
+                return newHomePageResponse(request.name, results, results.isNotEmpty())
+            }
         }
         
         val document = app.get(url).document
@@ -59,6 +124,124 @@ class Dizipal : MainAPI() {
 
         return newHomePageResponse(request.name, home)
     }
+
+    /**
+     * Kategori API'sinden içerik çeker
+     */
+    private suspend fun getCategoryContent(kategoriId: String, sayfa: Int = 1, sayfaBasina: Int = 30): List<SearchResponse> {
+        val apiUrl = "${mainUrl}/bg/findseries"
+        
+        val formData = mapOf(
+            "cKey" to "c61f91c5141d178450934fe81c0a2029",
+            "cValue" to "MTc2NDcwMDgwMGFiNmI2ZDEzNDg1ZmE4MjQyZmU2YzRhNzc0OTE2NTM3NjQyMTU5Mjk2YTI4YTU0NjUyMjI2ZmVjMzFkYzBkMWQyMWY4YzdiNA==",
+            "currentPage" to sayfa.toString(),
+            "currentPageCount" to sayfaBasina.toString(),
+            "categoryIdsComma" to kategoriId,
+            "imdbPointMin" to "0",
+            "imdbPointMax" to "10",
+            "releaseYearStart" to "1923",
+            "releaseYearEnd" to "2024",
+            "countryIdsComma" to "",
+            "orderType" to "date_desc",
+            "yerliCountry" to "9"
+        )
+        
+        val headers = mapOf(
+            "Content-Type" to "application/x-www-form-urlencoded",
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer" to mainUrl,
+            "Origin" to mainUrl.replace(Regex("/$"), ""),
+            "Accept" to "application/json, text/javascript, */*; q=0.01",
+            "Accept-Language" to "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"
+        )
+        
+        try {
+            val response = app.post(apiUrl, data = formData, headers = headers)
+            
+            if (response.code == 200) {
+                val jsonResponse = response.parsedSafe<CategoryApiResponse>()
+                
+                if (jsonResponse?.state == true || jsonResponse?.data != null) {
+                    val htmlContent = jsonResponse.data?.html ?: return emptyList()
+                    
+                    if (htmlContent.isNotEmpty()) {
+                        return parseCategoryHtml(htmlContent)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("Dizipal", "Kategori API hatası: ${e.message}")
+        }
+        
+        return emptyList()
+    }
+
+    /**
+     * Kategori API'den gelen HTML'i parse eder
+     */
+    private fun parseCategoryHtml(htmlContent: String): List<SearchResponse> {
+        val document = Jsoup.parse(htmlContent)
+        
+        // CSS selector'da özel karakterler için attribute selector kullan
+        return document.select("div[class*='bg-']").mapNotNull { kart ->
+            try {
+                val linkElem = kart.selectFirst("a[href]") ?: return@mapNotNull null
+                val href = linkElem.attr("href") ?: return@mapNotNull null
+                
+                // /bolum/ URL'lerini /series/ olarak düzelt ve bölüm numarasını temizle
+                val fixedHref = if (href.contains("/bolum/")) {
+                    val fixed = fixUrlNull(href)?.replace("/bolum/", "/series/")
+                    fixed?.replace(Regex("-[0-9]+x.*$"), "") ?: return@mapNotNull null
+                } else {
+                    fixUrlNull(href) ?: return@mapNotNull null
+                }
+                
+                val titleAttr = linkElem.attr("title")
+                
+                // Başlık - önce h2, sonra title attribute
+                val baslikElem = kart.selectFirst("h2")
+                var title = baslikElem?.text()?.trim() ?: ""
+                if (title.isEmpty() && titleAttr.isNotEmpty()) {
+                    title = titleAttr.replace(" izle", "").trim()
+                }
+                
+                if (title.isEmpty()) return@mapNotNull null
+                
+                // Poster
+                val imgElem = kart.selectFirst("img")
+                val posterUrl = imgElem?.let {
+                    fixUrlNull(it.attr("data-src")) ?: fixUrlNull(it.attr("src"))
+                }
+                
+                // Detaylı tip belirleme
+                val isTvSeries = determineTvType(fixedHref, title)
+                
+                if (isTvSeries) {
+                    newTvSeriesSearchResponse(title, fixedHref, TvType.TvSeries) {
+                        this.posterUrl = posterUrl
+                    }
+                } else {
+                    newMovieSearchResponse(title, fixedHref, TvType.Movie) {
+                        this.posterUrl = posterUrl
+                    }
+                }
+            } catch (e: Exception) {
+                null
+            }
+        }.distinctBy { it.url }
+    }
+
+    /**
+     * Kategori API yanıt modeli
+     */
+    private data class CategoryApiResponse(
+        @JsonProperty("state") val state: Boolean? = null,
+        @JsonProperty("data") val data: CategoryApiData? = null
+    )
+
+    private data class CategoryApiData(
+        @JsonProperty("html") val html: String? = null
+    )
 
     private fun Element.toTrendResult(): SearchResponse? {
         val aTag = this.selectFirst("a") ?: return null
