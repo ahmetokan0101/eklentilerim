@@ -538,15 +538,15 @@ class Dizipal : MainAPI() {
             "https://www.youtube.com/embed/$it" 
         }
 
-        // Bölümler: Yeni yapıda .season-lists:not(.hidden) veya szn1, szn2 gibi sezonlar
+        // Bölümler: Yeni yapıda .season-lists veya szn1, szn2 gibi sezonlar
         val episodes = mutableListOf<Episode>()
         
-        // Tüm görünür sezonları al (hidden olmayan)
-        val visibleSeasons = document.select(".season-lists:not(.hidden)")
+        // Tüm sezonları al (hidden olanlar dahil - Cloudstream3 kendisi gösterir)
+        val allSeasons = document.select(".season-lists")
         
-        if (visibleSeasons.isNotEmpty()) {
+        if (allSeasons.isNotEmpty()) {
             // Yeni yapı: Her sezon için bölümleri al
-            visibleSeasons.forEach { seasonDiv ->
+            allSeasons.forEach { seasonDiv ->
                 // Sezon numarasını szn1, szn2 gibi class'lardan çıkar
                 val seasonFromClass = Regex("""szn(\d+)""").find(seasonDiv.classNames().joinToString(" "))?.groupValues?.get(1)?.toIntOrNull()
                 
@@ -578,6 +578,8 @@ class Dizipal : MainAPI() {
                         this.name = epTitle
                         this.season = epSeason
                         this.episode = epEpisode
+                        // Bölüm için dizinin ana poster/backdrop resmini kullan
+                        this.posterUrl = poster
                     })
                 }
             }
@@ -593,6 +595,8 @@ class Dizipal : MainAPI() {
                     this.name = epName
                     this.season = epSeason
                     this.episode = epEpisode
+                    // Bölüm için dizinin ana poster/backdrop resmini kullan
+                    this.posterUrl = poster
                 }
             })
         }
