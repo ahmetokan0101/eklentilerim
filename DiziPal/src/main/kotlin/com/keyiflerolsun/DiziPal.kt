@@ -8,6 +8,9 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.fasterxml.jackson.annotation.JsonProperty
+import com.lagradost.cloudstream3.network.CloudflareKiller
+import okhttp3.Interceptor
+import okhttp3.Response
 import org.jsoup.Jsoup
 
 class Dizipal : MainAPI() {
@@ -17,6 +20,15 @@ class Dizipal : MainAPI() {
     override var lang                 = "tr"
     override val hasQuickSearch       = false
     override val supportedTypes       = setOf(TvType.Movie, TvType.TvSeries)
+
+    // ! CloudFlare bypass
+    override var sequentialMainPage = true
+    override var sequentialMainPageDelay = 150L  // 0.15 saniye
+    override var sequentialMainPageScrollDelay = 150L  // 0.15 saniye
+
+    // ! CloudFlare v2
+    private val cloudflareKiller by lazy { CloudflareKiller() }
+    private val interceptor by lazy { CloudflareInterceptor(cloudflareKiller) }
 
     // Kategori ID'leri - API'den içerik çekmek için
     private val kategoriIdMap = mapOf(
@@ -57,6 +69,26 @@ class Dizipal : MainAPI() {
         "thriller" to "36",
         "western" to "29"
     )
+
+    class CloudflareInterceptor(private val cloudflareKiller: CloudflareKiller): Interceptor {
+        override fun intercept(chain: Interceptor.Chain): Response {
+            val request = chain.request()
+            val response = chain.proceed(request)
+            
+            // Response body'nin ilk 1MB'ını parse et (stream bozulmaz)
+            // peekBody() kullanılmalı, normal body() stream'i bozar
+            val doc = Jsoup.parse(response.peekBody(1024 * 1024).string())
+            
+            // Cloudflare challenge sayfasını kontrol et
+            // En yaygın kullanılan yöntem: HTML içinde "Just a moment" kontrolü
+            if (doc.html().contains("Just a moment")) {
+                // Cloudflare tespit edildi, CloudflareKiller ile challenge'ı çöz
+                return cloudflareKiller.intercept(chain)
+            }
+            
+            return response
+        }
+    }
 
     override val mainPage = mainPageOf(
         "${mainUrl}"                to "Öne Çıkanlar",
