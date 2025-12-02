@@ -162,41 +162,52 @@ class Dizipal : MainAPI() {
             val response = app.post(apiUrl, data = formData, headers = headers)
             
             if (response.code == 200) {
+                val responseText = response.text
+                
+                // Önce parsedSafe ile dene
                 val jsonResponse = response.parsedSafe<CategoryApiResponse>()
                 
-                // Eğer parsedSafe null dönerse, raw response'u kontrol et
-                if (jsonResponse == null) {
-                    val responseText = response.text
-                    
-                    // Manuel JSON parsing dene
-                    try {
-                        val jsonText = responseText
-                        if (jsonText.contains("\"html\"")) {
-                            val htmlStart = jsonText.indexOf("\"html\":\"") + 8
-                            val htmlEnd = jsonText.indexOf("\"", htmlStart + 1)
-                            if (htmlEnd > htmlStart) {
-                                val htmlContent = jsonText.substring(htmlStart, htmlEnd)
-                                    .replace("\\\"", "\"")
-                                    .replace("\\n", "\n")
-                                    .replace("\\/", "/")
-                                
-                                if (htmlContent.isNotEmpty()) {
-                                    return parseCategoryHtml(htmlContent)
-                                }
-                            }
-                        }
-                    } catch (e: Exception) {
-                        // Silent fail
+                if (jsonResponse != null && (jsonResponse.state == true || jsonResponse.data != null)) {
+                    val htmlContent = jsonResponse.data?.html
+                    if (!htmlContent.isNullOrEmpty()) {
+                        val decodedHtml = htmlContent
+                            .replace("\\\"", "\"")
+                            .replace("\\n", "\n")
+                            .replace("\\/", "/")
+                            .replace("\\r", "\r")
+                            .replace("\\t", "\t")
+                        
+                        return parseCategoryHtml(decodedHtml)
                     }
-                    return emptyList()
                 }
                 
-                if (jsonResponse.state == true || jsonResponse.data != null) {
-                    val htmlContent = jsonResponse.data?.html ?: return emptyList()
-                    
-                    if (htmlContent.isNotEmpty()) {
-                        return parseCategoryHtml(htmlContent)
+                // Eğer parsedSafe başarısız olduysa, manuel JSON parsing dene
+                try {
+                    // JSON içinde html field'ını ara
+                    if (responseText.contains("\"html\"")) {
+                        // Daha güvenilir bir şekilde HTML içeriğini çıkar
+                        val htmlPattern = Regex("\"html\"\\s*:\\s*\"([^\"]*(?:\\\\.[^\"]*)*)\"", RegexOption.DOT_MATCHES_ALL)
+                        val match = htmlPattern.find(responseText)
+                        
+                        if (match != null) {
+                            var htmlContent = match.groupValues[1]
+                            
+                            // Escape karakterlerini temizle
+                            htmlContent = htmlContent
+                                .replace("\\\"", "\"")
+                                .replace("\\n", "\n")
+                                .replace("\\/", "/")
+                                .replace("\\r", "\r")
+                                .replace("\\t", "\t")
+                                .replace("\\\\", "\\")
+                            
+                            if (htmlContent.isNotEmpty()) {
+                                return parseCategoryHtml(htmlContent)
+                            }
+                        }
                     }
+                } catch (e: Exception) {
+                    // Silent fail
                 }
             }
         } catch (e: Exception) {
@@ -212,13 +223,20 @@ class Dizipal : MainAPI() {
     private fun parseCategoryHtml(htmlContent: String): List<SearchResponse> {
         val document = Jsoup.parse(htmlContent)
         
-        // Tüm div'leri bul ve class attribute'unu kontrol et
         // Python kodundaki gibi bg-[#22232a] class'ına sahip div'leri bul
-        val allDivs = document.select("div")
-        val kartlar = allDivs.filter { div ->
-            val classAttr = div.attr("class")
-            // bg- ile başlayan class'ları bul (bg-[#22232a] gibi)
-            classAttr.contains("bg-") && div.selectFirst("a[href]") != null
+        // Önce attribute selector ile dene
+        var kartlar = document.select("div[class*='bg-']").toList()
+        
+        // Eğer bulunamazsa, tüm div'leri filtrele
+        if (kartlar.isEmpty()) {
+            val allDivs = document.select("div")
+            kartlar = allDivs.filter { div ->
+                val classAttr = div.attr("class")
+                classAttr.contains("bg-") && div.selectFirst("a[href]") != null
+            }
+        } else {
+            // Sadece a[href] içerenleri filtrele
+            kartlar = kartlar.filter { it.selectFirst("a[href]") != null }
         }
         
         // İlk 2 içeriği atla (genelde kategoriye ait olmayan öne çıkan içerikler)
@@ -234,12 +252,15 @@ class Dizipal : MainAPI() {
                 val linkElem = kart.selectFirst("a[href]") ?: return@mapNotNull null
                 val href = linkElem.attr("href") ?: return@mapNotNull null
                 
+                // URL'yi düzelt
+                val fixedHref = fixUrlNull(href) ?: return@mapNotNull null
+                
                 // /bolum/ URL'lerini /series/ olarak düzelt ve bölüm numarasını temizle
-                val fixedHref = if (href.contains("/bolum/")) {
-                    val fixed = fixUrlNull(href)?.replace("/bolum/", "/series/")
-                    fixed?.replace(Regex("-[0-9]+x.*$"), "") ?: return@mapNotNull null
+                val finalHref = if (fixedHref.contains("/bolum/")) {
+                    val fixed = fixedHref.replace("/bolum/", "/series/")
+                    fixed.replace(Regex("-[0-9]+x.*$"), "")
                 } else {
-                    fixUrlNull(href) ?: return@mapNotNull null
+                    fixedHref
                 }
                 
                 val titleAttr = linkElem.attr("title")
@@ -260,14 +281,14 @@ class Dizipal : MainAPI() {
                 }
                 
                 // Detaylı tip belirleme
-                val isTvSeries = determineTvType(fixedHref, title)
+                val isTvSeries = determineTvType(finalHref, title)
                 
                 if (isTvSeries) {
-                    newTvSeriesSearchResponse(title, fixedHref, TvType.TvSeries) {
+                    newTvSeriesSearchResponse(title, finalHref, TvType.TvSeries) {
                         this.posterUrl = posterUrl
                     }
                 } else {
-                    newMovieSearchResponse(title, fixedHref, TvType.Movie) {
+                    newMovieSearchResponse(title, finalHref, TvType.Movie) {
                         this.posterUrl = posterUrl
                     }
                 }
