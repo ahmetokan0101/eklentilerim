@@ -243,16 +243,25 @@ class DizilifeTester:
             tag_elems = doc.select("a[href*='/tur/']")
             tags = [tag.text.strip() for tag in tag_elems if tag.text.strip()]
         
-        # Rating
+        # Rating - span.rating-value (öncelikli)
         rating = None
-        rating_elem = doc.select_one("span.dt_rating_vgs")
+        rating_elem = doc.select_one("span.rating-value")
         if rating_elem:
             rating_text = rating_elem.text.strip()
-            # Basit rating parse (örn: "8.5" -> 8.5)
+            # Basit rating parse (örn: "9.2" -> 9.2)
             try:
                 rating = float(rating_text)
             except:
                 pass
+        # Fallback: span.dt_rating_vgs
+        if not rating:
+            rating_elem = doc.select_one("span.dt_rating_vgs")
+            if rating_elem:
+                rating_text = rating_elem.text.strip()
+                try:
+                    rating = float(rating_text)
+                except:
+                    pass
         
         # Süre
         duration = None

@@ -1,0 +1,9 @@
+{
+  "name": "Movix Repository",
+  "description": "Movix plugin repository",
+  "manifestVersion": 1,
+  "pluginLists": [
+    "https://raw.githubusercontent.com/ahmetokan0101/eklentilerim/main/plugins.json"
+  ]
+}
+
