@@ -19,10 +19,10 @@
     "name": "Dizilla"
   },
   {
-    "iconUrl": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://dizipal1220.com&size=128",
+    "iconUrl": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://dizipal1515.com&size=128",
     "apiVersion": 1,
     "repositoryUrl": "https://github.com/ahmetokan0101/eklentilerim",
-    "fileSize": 19318,
+    "fileSize": 15707,
     "status": 1,
     "language": "tr",
     "authors": [
@@ -32,9 +32,9 @@
       "TvSeries",
       "Movie"
     ],
-    "version": 2,
+    "version": 3,
     "internalName": "DiziPal",
-    "description": "DiziPal tüm yabancı dizileri ve filmleri ücretsiz olarak Türkçe Dublaj ve altyazılı seçenekleri ile 1080P kalite izleyebileceğiniz yeni nesil dizi ve film izleme siteniz.",
+    "description": "DiziPal tüm yabancı dizileri ve filmleri ücretsiz olarak Türkçe Dublaj ve altyazılı seçenekleri ile 1080P kalite izleyebileceğiniz yeni nesil dizi ve film izleme siteniz. Geliştirilmiş film/dizi ayırt etme özelliği ile daha iyi sonuçlar sunar.",
     "url": "https://raw.githubusercontent.com/ahmetokan0101/eklentilerim/main/DiziPal.cs3",
     "name": "DiziPal"
   },
