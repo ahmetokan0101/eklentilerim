@@ -96,6 +96,7 @@ class Dizipal : MainAPI() {
         "kategori:aile"             to "Aile",
         "kategori:aksiyon"          to "Aksiyon",
         "kategori:animasyon"        to "Animasyon",
+        "kategori:belgesel"         to "Belgesel",
         "kategori:komedi"           to "Komedi",
         "kategori:korku"            to "Korku",
         "kategori:dram"             to "Dram",
