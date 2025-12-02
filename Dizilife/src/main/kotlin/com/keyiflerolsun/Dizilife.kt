@@ -83,7 +83,8 @@ class Dizilife : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val document = app.get("${mainUrl}/?s=${query}").document
+        val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
+        val document = app.get("${mainUrl}/arama?q=${encodedQuery}").document
 
         // Arama sonuçları da content-card yapısını kullanıyor olabilir
         val results = document.select("div.content-card").mapNotNull { it.toMainPageResult() }
