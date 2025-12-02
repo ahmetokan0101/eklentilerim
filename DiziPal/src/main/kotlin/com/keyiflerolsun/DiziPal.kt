@@ -426,32 +426,135 @@ class Dizipal : MainAPI() {
 
     override suspend fun quickSearch(query: String): List<SearchResponse> = search(query)
 
+    // Sidebar'dan değer okuma yardımcı fonksiyonu
+    private fun getSidebarValue(document: org.jsoup.nodes.Document, key: String, exactMatch: Boolean = true): String? {
+        return document.select(".rigth-content li, ul.rigth-content li").firstOrNull {
+            val keyText = it.selectFirst(".key")?.text()?.trim() ?: ""
+            if (exactMatch) {
+                keyText == key
+            } else {
+                keyText.contains(key, ignoreCase = true)
+            }
+        }?.selectFirst(".value a, .value")?.text()?.trim()
+    }
+    
+    // Rating string'ini integer'a çevirme
+    private fun String.toRatingInt(): Int? {
+        return this.replace(",", ".").toDoubleOrNull()?.times(10)?.toInt()
+    }
+
     override suspend fun load(url: String): LoadResponse? {
         val document = app.get(url).document
 
-        val title           = document.selectFirst("h1")?.text()?.trim() ?: return null
-        val poster          = fixUrlNull(document.selectFirst("div.poster img")?.attr("src"))
-        val description     = document.selectFirst("div.wp-content p")?.text()?.trim()
-        val year            = document.selectFirst("div.extra span.C a")?.text()?.trim()?.toIntOrNull()
-        val tags            = document.select("div.sgeneros a").map { it.text() }
-        val rating          = document.selectFirst("span.dt_rating_vgs")?.text()?.trim()?.toRatingInt()
-        val duration        = document.selectFirst("span.runtime")?.text()?.split(" ")?.first()?.trim()?.toIntOrNull()
+        val title = document.selectFirst("h1")?.text()?.trim() ?: return null
+        
+        // Poster: Yeni yapıda .page-top img veya eski yapıda div.poster img
+        val poster = fixUrlNull(
+            document.selectFirst(".page-top img")?.attr("src") ?:
+            document.selectFirst(".page-top img.lazyload")?.attr("data-src") ?:
+            document.selectFirst("div.poster img")?.attr("src")
+        )
+        
+        // Açıklama: Yeni yapıda div.w-full p.text-white.text-base
+        val description = document.selectFirst("div.w-full p.text-white.text-base")?.text()?.trim()
+            ?: document.selectFirst("div.w-full p.mt-4")?.text()?.trim()
+            ?: document.selectFirst("div.wp-content p")?.text()?.trim()
+        
+        // Yıl: Sidebar'dan "Yıl" key'i ile (içerir kontrolü)
+        val year = document.select(".rigth-content li, ul.rigth-content li").firstOrNull {
+            val keyText = it.selectFirst(".key")?.text()?.trim() ?: ""
+            keyText.contains("Yıl", ignoreCase = true) && !keyText.contains("Gösterim")
+        }?.selectFirst(".value a, .value")?.text()?.trim()?.toIntOrNull()
+            ?: document.select(".rigth-content li, ul.rigth-content li").firstOrNull {
+                val keyText = it.selectFirst(".key")?.text()?.trim() ?: ""
+                keyText.contains("Gösterim", ignoreCase = true)
+            }?.selectFirst(".value")?.text()?.trim()?.toIntOrNull()
+            ?: document.selectFirst("div.extra span.C a")?.text()?.trim()?.toIntOrNull()
+        
+        // Kategoriler: Sidebar'dan "Kategoriler" key'i ile
+        val tags = (document.select(".rigth-content li, ul.rigth-content li").firstOrNull {
+            it.selectFirst(".key")?.text()?.trim() == "Kategoriler"
+        }?.select(".value a")?.map { it.text().trim() } ?: emptyList<String>())
+            .ifEmpty { document.select("div.sgeneros a").map { it.text().trim() } }
+        
+        // Rating: Sidebar'dan "IMDB Puanı" key'i ile (içerir kontrolü)
+        val rating = document.select(".rigth-content li, ul.rigth-content li").firstOrNull {
+            val keyText = it.selectFirst(".key")?.text()?.trim() ?: ""
+            keyText.contains("IMDB", ignoreCase = true) || keyText.contains("Puan", ignoreCase = true)
+        }?.selectFirst(".value")?.text()?.trim()?.toRatingInt()
+            ?: document.selectFirst("span.dt_rating_vgs")?.text()?.trim()?.toRatingInt()
+        
+        // Süre: Sidebar'dan "Süre" key'i ile
+        val durationText = getSidebarValue(document, "Süre") ?: ""
+        val duration = Regex("""(\d+)""").find(durationText)?.groupValues?.get(1)?.toIntOrNull()
+            ?: document.selectFirst("span.runtime")?.text()?.split(" ")?.first()?.trim()?.toIntOrNull()
+        
+        // Öneriler: Eski selector'ları koruyoruz (varsa)
         val recommendations = document.select("div.srelacionados article").mapNotNull { it.toRecommendationResult() }
-        val actors          = document.select("span.valor a").map { Actor(it.text()) }
-        val trailer         = Regex("""embed\/(.*)\?rel""").find(document.html())?.groupValues?.get(1)?.let { "https://www.youtube.com/embed/$it" }
-
-        // Önce bölümleri kontrol et - eğer bölümler varsa kesinlikle dizi
-        val episodes = document.select("div.episodes article, div.bolumler article, div.seasons article").mapNotNull {
-            val epName    = it.selectFirst("a")?.text()?.trim() ?: return@mapNotNull null
-            val epHref    = fixUrlNull(it.selectFirst("a")?.attr("href")) ?: return@mapNotNull null
-            val epEpisode = Regex("""(\d+)\.?\s*[Bb]ölüm""").find(epName)?.groupValues?.get(1)?.toIntOrNull()
-            val epSeason  = Regex("""(\d+)\.?\s*[Ss]ezon""").find(epName)?.groupValues?.get(1)?.toIntOrNull() ?: 1
-
-            newEpisode(epHref) {
-                this.name    = epName
-                this.season  = epSeason
-                this.episode = epEpisode
+        
+        // Oyuncular: Yeni yapıda .movie-actors .actor-item .name
+        val actors = document.select(".movie-actors .actor-item .name").mapNotNull {
+            val name = it.text().trim()
+            if (name.isNotBlank()) Actor(name) else null
+        }.ifEmpty {
+            document.select(".movie-actors a[href*='/oyuncu/']").mapNotNull {
+                val name = it.selectFirst(".name")?.text()?.trim() ?: it.attr("title")
+                if (name.isNotBlank()) Actor(name) else null
             }
+        }.ifEmpty {
+            document.select("span.valor a").map { Actor(it.text()) }
+        }
+        
+        // Trailer: Eski regex'i koruyoruz
+        val trailer = Regex("""embed\/(.*)\?rel""").find(document.html())?.groupValues?.get(1)?.let { 
+            "https://www.youtube.com/embed/$it" 
+        }
+
+        // Bölümler: Yeni yapıda .season-lists:not(.hidden) veya szn1, szn2 gibi sezonlar
+        val episodes = mutableListOf<Episode>()
+        
+        // Tüm görünür sezonları al (hidden olmayan)
+        val visibleSeasons = document.select(".season-lists:not(.hidden)")
+        
+        if (visibleSeasons.isNotEmpty()) {
+            // Yeni yapı: Her sezon için bölümleri al
+            visibleSeasons.forEach { seasonDiv ->
+                seasonDiv.select(".grid > div").forEach { episodeDiv ->
+                    val epLink = episodeDiv.selectFirst("a[data-dizipal-pageloader]") ?: return@forEach
+                    val epHref = fixUrlNull(epLink.attr("href")) ?: return@forEach
+                    
+                    // Bölüm başlığı
+                    val epTitle = epLink.selectFirst("h2")?.text()?.trim() ?: title
+                    
+                    // Sezon ve bölüm bilgisi
+                    val epInfo = epLink.selectFirst("div[style*='font-size:13px']")?.text()?.trim() ?: ""
+                    val epSeason = Regex("""(\d+)\.?\s*[Ss]ezon""").find(epInfo)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                    val epEpisode = Regex("""(\d+)\.?\s*[Bb]ölüm""").find(epInfo)?.groupValues?.get(1)?.toIntOrNull()
+                    
+                    // Episode numarası için span'a da bak
+                    val epNumber = episodeDiv.selectFirst("span.text-white.opacity-60")?.text()?.trim()?.toIntOrNull()
+                    
+                    episodes.add(newEpisode(epHref) {
+                        this.name = epTitle
+                        this.season = epSeason
+                        this.episode = epEpisode ?: epNumber
+                    })
+                }
+            }
+        } else {
+            // Eski yapı: Eski selector'ları dene
+            episodes.addAll(document.select("div.episodes article, div.bolumler article, div.seasons article").mapNotNull {
+                val epName = it.selectFirst("a")?.text()?.trim() ?: return@mapNotNull null
+                val epHref = fixUrlNull(it.selectFirst("a")?.attr("href")) ?: return@mapNotNull null
+                val epEpisode = Regex("""(\d+)\.?\s*[Bb]ölüm""").find(epName)?.groupValues?.get(1)?.toIntOrNull()
+                val epSeason = Regex("""(\d+)\.?\s*[Ss]ezon""").find(epName)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+
+                newEpisode(epHref) {
+                    this.name = epName
+                    this.season = epSeason
+                    this.episode = epEpisode
+                }
+            })
         }
         
         // Detaylı tip belirleme - bölümler varsa kesinlikle dizi
