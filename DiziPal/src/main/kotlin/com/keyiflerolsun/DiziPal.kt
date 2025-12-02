@@ -101,7 +101,12 @@ class Dizipal : MainAPI() {
         "kategori:korku"            to "Korku",
         "kategori:dram"             to "Dram",
         "kategori:gerilim"          to "Gerilim",
-        "kategori:macera"           to "Macera"
+        "kategori:macera"           to "Macera",
+        "kategori:romantik"         to "Romantik",
+        "kategori:fantastik"        to "Fantastik",
+        "kategori:gizem"            to "Gizem",
+        "kategori:suc"              to "Suç",
+        "kategori:biyografi"        to "Biyografi"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
