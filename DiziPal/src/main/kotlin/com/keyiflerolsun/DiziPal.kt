@@ -75,51 +75,55 @@ class Dizipal : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = request.data.trimEnd('/')
         
-        // Ana sayfa için Trend Diziler bölümünü çek
-        // request.name kontrolü daha güvenilir
-        val isHomePage = request.name == "Öne Çıkanlar" || 
-                        url == mainUrl.trimEnd('/') || 
-                        url == "${mainUrl.trimEnd('/')}/"
+        // Ana sayfa kontrolü - request.name ile kontrol et (daha güvenilir)
+        val isHomePage = request.name == "Öne Çıkanlar"
         
         // Kategori sayfası kontrolü (kategori:xxx formatı)
         val isKategoriPage = url.startsWith("kategori:")
-        val kategoriKey = if (isKategoriPage) {
-            url.substringAfter("kategori:")
-        } else {
-            null
-        }
         
         // Öne Çıkanlar için sayfalama yok, sadece ilk sayfayı göster
         if (isHomePage && page > 1) {
             return newHomePageResponse(request.name, emptyList())
         }
         
+        // Ana sayfa ise direkt HTML'den Trend Diziler'i çek
+        if (isHomePage) {
+            val document = app.get(mainUrl).document
+            
+            // Trend Diziler bölümünü çek - HTML'den direkt al, filtre yok
+            val trends = document.select("ul.trends li").mapNotNull { it.toTrendResult() }
+            val finalTrends = if (trends.isNotEmpty()) {
+                trends.distinctBy { it.url }
+            } else {
+                // Alternatif selector'lar dene
+                val altTrends = document.select("ul.trends > li").mapNotNull { it.toTrendResult() }
+                if (altTrends.isNotEmpty()) {
+                    altTrends.distinctBy { it.url }
+                } else {
+                    // Daha fazla alternatif dene
+                    document.select("article.movie-type-genres ul.trends li").mapNotNull { it.toTrendResult() }
+                        .distinctBy { it.url }
+                }
+            }
+            
+            return newHomePageResponse(request.name, finalTrends)
+        }
+        
         // Kategori sayfasıysa API'yi kullan
-        if (isKategoriPage && kategoriKey != null) {
+        if (isKategoriPage) {
+            val kategoriKey = url.substringAfter("kategori:")
             val kategoriId = kategoriIdMap[kategoriKey]
+            
             if (kategoriId != null) {
                 val results = getCategoryContent(kategoriId, page)
                 return newHomePageResponse(request.name, results, results.isNotEmpty())
             }
         }
         
+        // Diğer durumlar için normal sayfa çek
         val document = app.get(url).document
-        
-        val home = if (isHomePage) {
-            // Trend Diziler bölümünü çek ve duplicate'leri engelle
-            val trends = document.select("ul.trends li").mapNotNull { it.toTrendResult() }
-            val uniqueTrends = if (trends.isNotEmpty()) {
-                trends.distinctBy { it.url } // Aynı URL'li öğeleri filtrele
-            } else {
-                // Alternatif selector'lar dene
-                document.select("ul.trends > li").mapNotNull { it.toTrendResult() }
-                    .distinctBy { it.url }
-            }
-            uniqueTrends
-        } else {
-            document.select("div.items article").mapNotNull { it.toMainPageResult() }
-                .distinctBy { it.url } // Diğer sayfalarda da duplicate kontrolü
-        }
+        val home = document.select("div.items article").mapNotNull { it.toMainPageResult() }
+            .distinctBy { it.url }
 
         return newHomePageResponse(request.name, home)
     }
