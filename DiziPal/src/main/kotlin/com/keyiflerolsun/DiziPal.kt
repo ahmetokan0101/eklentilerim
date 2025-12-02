@@ -2,7 +2,6 @@
 
 package com.keyiflerolsun
 
-import android.util.Log
 import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
@@ -140,7 +139,7 @@ class Dizipal : MainAPI() {
             "imdbPointMin" to "0",
             "imdbPointMax" to "10",
             "releaseYearStart" to "1923",
-            "releaseYearEnd" to "2024",
+            "releaseYearEnd" to "2025",
             "countryIdsComma" to "",
             "orderType" to "date_desc",
             "yerliCountry" to "9"
@@ -161,7 +160,34 @@ class Dizipal : MainAPI() {
             if (response.code == 200) {
                 val jsonResponse = response.parsedSafe<CategoryApiResponse>()
                 
-                if (jsonResponse?.state == true || jsonResponse?.data != null) {
+                // Eğer parsedSafe null dönerse, raw response'u kontrol et
+                if (jsonResponse == null) {
+                    val responseText = response.text
+                    
+                    // Manuel JSON parsing dene
+                    try {
+                        val jsonText = responseText
+                        if (jsonText.contains("\"html\"")) {
+                            val htmlStart = jsonText.indexOf("\"html\":\"") + 8
+                            val htmlEnd = jsonText.indexOf("\"", htmlStart + 1)
+                            if (htmlEnd > htmlStart) {
+                                val htmlContent = jsonText.substring(htmlStart, htmlEnd)
+                                    .replace("\\\"", "\"")
+                                    .replace("\\n", "\n")
+                                    .replace("\\/", "/")
+                                
+                                if (htmlContent.isNotEmpty()) {
+                                    return parseCategoryHtml(htmlContent)
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // Silent fail
+                    }
+                    return emptyList()
+                }
+                
+                if (jsonResponse.state == true || jsonResponse.data != null) {
                     val htmlContent = jsonResponse.data?.html ?: return emptyList()
                     
                     if (htmlContent.isNotEmpty()) {
@@ -170,7 +196,7 @@ class Dizipal : MainAPI() {
                 }
             }
         } catch (e: Exception) {
-            Log.e("Dizipal", "Kategori API hatası: ${e.message}")
+            // Silent fail
         }
         
         return emptyList()
@@ -182,8 +208,24 @@ class Dizipal : MainAPI() {
     private fun parseCategoryHtml(htmlContent: String): List<SearchResponse> {
         val document = Jsoup.parse(htmlContent)
         
-        // CSS selector'da özel karakterler için attribute selector kullan
-        return document.select("div[class*='bg-']").mapNotNull { kart ->
+        // Tüm div'leri bul ve class attribute'unu kontrol et
+        // Python kodundaki gibi bg-[#22232a] class'ına sahip div'leri bul
+        val allDivs = document.select("div")
+        val kartlar = allDivs.filter { div ->
+            val classAttr = div.attr("class")
+            // bg- ile başlayan class'ları bul (bg-[#22232a] gibi)
+            classAttr.contains("bg-") && div.selectFirst("a[href]") != null
+        }
+        
+        // İlk 2 içeriği atla (genelde kategoriye ait olmayan öne çıkan içerikler)
+        // Ama eğer toplam 2 veya daha az içerik varsa hiçbirini atlama
+        val cardsToProcess = if (kartlar.size > 2) {
+            kartlar.drop(2)
+        } else {
+            kartlar
+        }
+        
+        return cardsToProcess.mapNotNull { kart ->
             try {
                 val linkElem = kart.selectFirst("a[href]") ?: return@mapNotNull null
                 val href = linkElem.attr("href") ?: return@mapNotNull null
@@ -469,7 +511,6 @@ class Dizipal : MainAPI() {
     }
 
     override suspend fun loadLinks(data: String, isCasting: Boolean, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
-        Log.d("STF", "data » ${data}")
         val document = app.get(data).document
 
         // TODO:
