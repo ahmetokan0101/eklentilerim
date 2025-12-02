@@ -699,11 +699,87 @@ class Dizipal : MainAPI() {
     }
 
     override suspend fun loadLinks(data: String, isCasting: Boolean, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
-        val document = app.get(data).document
+        val document = app.get(data, referer = data).document
 
-        // TODO:
-        // loadExtractor(iframe, "${mainUrl}/", subtitleCallback, callback)
+        val iframes = mutableListOf<String>()
 
-        return true
+        // 1. Önce tüm iframe'leri bul (data-src ve src attribute'larını kontrol et)
+        document.select("iframe").forEach { iframe ->
+            val src = iframe.attr("data-src").takeIf { it.isNotEmpty() } 
+                ?: iframe.attr("src").takeIf { it.isNotEmpty() }
+            src?.let { 
+                fixUrlNull(it)?.let { iframes.add(it) }
+            }
+        }
+
+        // 2. iframe-container içindeki iframe'leri bul
+        if (iframes.isEmpty()) {
+            document.select("div.iframe-container iframe").forEach { iframe ->
+                val src = iframe.attr("data-src").takeIf { it.isNotEmpty() } 
+                    ?: iframe.attr("src").takeIf { it.isNotEmpty() }
+                src?.let { 
+                    fixUrlNull(it)?.let { iframes.add(it) }
+                }
+            }
+        }
+
+        // 3. videoIframe ID'li iframe'i bul
+        if (iframes.isEmpty()) {
+            document.selectFirst("#videoIframe")?.let { iframe ->
+                val src = iframe.attr("data-src").takeIf { it.isNotEmpty() } 
+                    ?: iframe.attr("src").takeIf { it.isNotEmpty() }
+                src?.let { 
+                    fixUrlNull(it)?.let { iframes.add(it) }
+                }
+            }
+        }
+
+        // 4. Video player container'ları kontrol et
+        if (iframes.isEmpty()) {
+            document.selectFirst("div.video-player, div.player, div#player")?.let { container ->
+                container.select("iframe").forEach { iframe ->
+                    val src = iframe.attr("data-src").takeIf { it.isNotEmpty() } 
+                        ?: iframe.attr("src").takeIf { it.isNotEmpty() }
+                    src?.let { 
+                        fixUrlNull(it)?.let { iframes.add(it) }
+                    }
+                }
+            }
+        }
+
+        // 5. Script içinde iframe URL'leri ara (dinamik yükleme için)
+        if (iframes.isEmpty()) {
+            val htmlContent = document.html()
+            val iframePatterns = listOf(
+                Regex("""iframe\s+src\s*=\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE),
+                Regex("""iframe\s+data-src\s*=\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE),
+                Regex("""videoIframe\.src\s*=\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE),
+                Regex("""setAttribute\(['"]src['"],\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
+            )
+            
+            iframePatterns.forEach { pattern ->
+                pattern.findAll(htmlContent).forEach { match ->
+                    match.groupValues.getOrNull(1)?.let { url ->
+                        fixUrlNull(url)?.let { 
+                            if (!iframes.contains(it)) {
+                                iframes.add(it)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 6. Bulunan iframe'leri loadExtractor'a gönder
+        if (iframes.isNotEmpty()) {
+            for (iframe in iframes) {
+                if (iframe.isNotEmpty()) {
+                    loadExtractor(iframe, "${mainUrl}/", subtitleCallback, callback)
+                }
+            }
+            return true
+        }
+
+        return false
     }
 }
