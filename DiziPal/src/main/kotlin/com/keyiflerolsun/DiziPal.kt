@@ -438,9 +438,9 @@ class Dizipal : MainAPI() {
         }?.selectFirst(".value a, .value")?.text()?.trim()
     }
     
-    // Rating string'ini integer'a çevirme
-    private fun String.toRatingInt(): Int? {
-        return this.replace(",", ".").toDoubleOrNull()?.times(10)?.toInt()
+    // Rating string'ini double'a çevirme (Score.from10 için)
+    private fun String.toRatingDouble(): Double? {
+        return this.replace(",", ".").toDoubleOrNull()
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -477,12 +477,14 @@ class Dizipal : MainAPI() {
         }?.select(".value a")?.map { it.text().trim() } ?: emptyList<String>())
             .ifEmpty { document.select("div.sgeneros a").map { it.text().trim() } }
         
-        // Rating: Sidebar'dan "IMDB Puanı" key'i ile (içerir kontrolü)
-        val rating = document.select(".rigth-content li, ul.rigth-content li").firstOrNull {
+        // Rating: Sidebar'dan "IMDB Puanı" key'i ile (içerir kontrolü) - Score.from10 için string/double
+        val ratingString = document.select(".rigth-content li, ul.rigth-content li").firstOrNull {
             val keyText = it.selectFirst(".key")?.text()?.trim() ?: ""
             keyText.contains("IMDB", ignoreCase = true) || keyText.contains("Puan", ignoreCase = true)
-        }?.selectFirst(".value")?.text()?.trim()?.toRatingInt()
-            ?: document.selectFirst("span.dt_rating_vgs")?.text()?.trim()?.toRatingInt()
+        }?.selectFirst(".value")?.text()?.trim()
+            ?: document.selectFirst("span.dt_rating_vgs")?.text()?.trim()
+        
+        val rating = ratingString?.toRatingDouble()?.let { Score.from10(it) }
         
         // Süre: Sidebar'dan "Süre" key'i ile
         val durationText = getSidebarValue(document, "Süre") ?: ""
@@ -492,17 +494,22 @@ class Dizipal : MainAPI() {
         // Öneriler: Eski selector'ları koruyoruz (varsa)
         val recommendations = document.select("div.srelacionados article").mapNotNull { it.toRecommendationResult() }
         
-        // Oyuncular: Yeni yapıda .movie-actors .actor-item .name
-        val actors = document.select(".movie-actors .actor-item .name").mapNotNull {
-            val name = it.text().trim()
-            if (name.isNotBlank()) Actor(name) else null
+        // Oyuncular: Yeni yapıda .movie-actors .actor-item .name veya a[title]
+        val actors = document.select(".movie-actors a[href*='/oyuncu/']").mapNotNull {
+            val name = it.selectFirst(".actor-item .name")?.text()?.trim()
+                ?: it.selectFirst(".name")?.text()?.trim()
+                ?: it.attr("title").takeIf { it.isNotBlank() }
+            if (name != null && name.isNotBlank()) Actor(name) else null
         }.ifEmpty {
-            document.select(".movie-actors a[href*='/oyuncu/']").mapNotNull {
-                val name = it.selectFirst(".name")?.text()?.trim() ?: it.attr("title")
+            document.select(".movie-actors .actor-item .name").mapNotNull {
+                val name = it.text().trim()
                 if (name.isNotBlank()) Actor(name) else null
             }
         }.ifEmpty {
-            document.select("span.valor a").map { Actor(it.text()) }
+            document.select("span.valor a").mapNotNull { 
+                val name = it.text().trim()
+                if (name.isNotBlank()) Actor(name) else null
+            }
         }
         
         // Trailer: Eski regex'i koruyoruz
@@ -519,6 +526,9 @@ class Dizipal : MainAPI() {
         if (visibleSeasons.isNotEmpty()) {
             // Yeni yapı: Her sezon için bölümleri al
             visibleSeasons.forEach { seasonDiv ->
+                // Sezon numarasını szn1, szn2 gibi class'lardan çıkar
+                val seasonFromClass = Regex("""szn(\d+)""").find(seasonDiv.classNames().joinToString(" "))?.groupValues?.get(1)?.toIntOrNull()
+                
                 seasonDiv.select(".grid > div").forEach { episodeDiv ->
                     val epLink = episodeDiv.selectFirst("a[data-dizipal-pageloader]") ?: return@forEach
                     val epHref = fixUrlNull(epLink.attr("href")) ?: return@forEach
@@ -526,18 +536,27 @@ class Dizipal : MainAPI() {
                     // Bölüm başlığı
                     val epTitle = epLink.selectFirst("h2")?.text()?.trim() ?: title
                     
-                    // Sezon ve bölüm bilgisi
+                    // Sezon ve bölüm bilgisi - önce div'den, sonra URL'den
                     val epInfo = epLink.selectFirst("div[style*='font-size:13px']")?.text()?.trim() ?: ""
-                    val epSeason = Regex("""(\d+)\.?\s*[Ss]ezon""").find(epInfo)?.groupValues?.get(1)?.toIntOrNull() ?: 1
-                    val epEpisode = Regex("""(\d+)\.?\s*[Bb]ölüm""").find(epInfo)?.groupValues?.get(1)?.toIntOrNull()
+                    val epSeasonFromInfo = Regex("""(\d+)\.?\s*[Ss]ezon""").find(epInfo)?.groupValues?.get(1)?.toIntOrNull()
+                    val epEpisodeFromInfo = Regex("""(\d+)\.?\s*[Bb]ölüm""").find(epInfo)?.groupValues?.get(1)?.toIntOrNull()
+                    
+                    // URL'den sezon ve bölüm çıkar (örn: wednesday-1x1 -> 1, 1)
+                    val urlMatch = Regex("""-(\d+)x(\d+)(?:\.|$)""").find(epHref)
+                    val epSeasonFromUrl = urlMatch?.groupValues?.get(1)?.toIntOrNull()
+                    val epEpisodeFromUrl = urlMatch?.groupValues?.get(2)?.toIntOrNull()
                     
                     // Episode numarası için span'a da bak
                     val epNumber = episodeDiv.selectFirst("span.text-white.opacity-60")?.text()?.trim()?.toIntOrNull()
                     
+                    // Öncelik sırası: class > info > URL
+                    val epSeason = seasonFromClass ?: epSeasonFromInfo ?: epSeasonFromUrl ?: 1
+                    val epEpisode = epEpisodeFromInfo ?: epEpisodeFromUrl ?: epNumber
+                    
                     episodes.add(newEpisode(epHref) {
                         this.name = epTitle
                         this.season = epSeason
-                        this.episode = epEpisode ?: epNumber
+                        this.episode = epEpisode
                     })
                 }
             }
@@ -566,7 +585,7 @@ class Dizipal : MainAPI() {
                 this.plot            = description
                 this.year            = year
                 this.tags            = tags
-                this.rating          = rating
+                this.score           = rating
                 this.recommendations = recommendations
                 addActors(actors)
                 addTrailer(trailer)
@@ -577,7 +596,7 @@ class Dizipal : MainAPI() {
                 this.plot            = description
                 this.year            = year
                 this.tags            = tags
-                this.rating          = rating
+                this.score           = rating
                 this.duration        = duration
                 this.recommendations = recommendations
                 addActors(actors)
