@@ -1,5 +1,3 @@
-// ! Bu araç @keyiflerolsun tarafından | @KekikAkademi için yazılmıştır.
-
 package com.keyiflerolsun
 
 import org.jsoup.nodes.Element
@@ -12,6 +10,15 @@ import com.lagradost.cloudstream3.network.CloudflareKiller
 import okhttp3.Interceptor
 import okhttp3.Response
 import org.jsoup.Jsoup
+import android.util.Base64
+import javax.crypto.Cipher
+import javax.crypto.SecretKeyFactory
+import javax.crypto.spec.SecretKeySpec
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.PBEKeySpec
+import java.net.URL
+import org.json.JSONObject
+import kotlin.text.Charsets
 
 class Dizipal : MainAPI() {
     override var mainUrl              = "https://dizipal1515.com/"
@@ -698,12 +705,270 @@ class Dizipal : MainAPI() {
         return false
     }
 
-    override suspend fun loadLinks(data: String, isCasting: Boolean, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
-        val document = app.get(data, referer = data).document
+    // Stream URL çıkarma için constants
+    private val PASSPHRASE = "3hPn4uCjTVtfYWcjIcoJQ4cL1WWk1qxXI39egLYOmNv6IblA7eKJz68uU3eLzux1biZLCms0quEjTYniGv5z1JcKbNIsDQFSeIZOBZJz4is6pD7UyWDggWWzTLBQbHcQFpBQdClnuQaMNUHtLHTpzCvZy33p6I7wFBvL4fnXBYH84aUIyWGTRvM2G5cfoNf4705tO2kv"
+    private val SOURCE2_PATH = "/source2.php?v="
 
+    // Şifreli veri modeli
+    private data class EncryptedData(
+        val ciphertext: String,
+        val iv: String,
+        val salt: String
+    )
+
+    // ADIM -1: HTML'den şifreli veriyi çıkar
+    private suspend fun extractEncryptedDataFromUrl(url: String): EncryptedData? {
+        try {
+            val document = app.get(url).document
+            val html = document.html()
+            
+            // data-rm-k="true" attribute'una sahip elementten veriyi çıkar - Python'daki pattern'ler
+            var match = Regex("""data-rm-k=["']?true["']?[^>]*>([^<]+)""", RegexOption.IGNORE_CASE).find(html)
+            if (match == null) {
+                match = Regex("""data-rm-k=["']?true["']?[^>]*>\s*(\{[^}]+\})""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)).find(html)
+            }
+            
+            if (match != null) {
+                var dataText = match.groupValues[1].trim()
+                // Python'daki gibi HTML entity'leri decode et
+                dataText = dataText.replace("&quot;", "\"").replace("&amp;", "&")
+                
+                try {
+                    // JSON parse et - Python'da json.loads() direkt kullanıyor
+                    // Önce JSON objesini bulmaya çalış
+                    val jsonStart = dataText.indexOf('{')
+                    val jsonEnd = dataText.lastIndexOf('}') + 1
+                    if (jsonStart >= 0 && jsonEnd > jsonStart) {
+                        val jsonText = dataText.substring(jsonStart, jsonEnd)
+                        val json = JSONObject(jsonText)
+                        
+                        // Python'daki gibi .get() ile optional al, yoksa empty string
+                        val ciphertext = if (json.has("ciphertext")) json.getString("ciphertext") else ""
+                        val iv = if (json.has("iv")) json.getString("iv") else ""
+                        val salt = if (json.has("salt")) json.getString("salt") else ""
+                        
+                        if (ciphertext.isNotEmpty() && iv.isNotEmpty() && salt.isNotEmpty()) {
+                            return EncryptedData(ciphertext, iv, salt)
+                        }
+                    } else {
+                        // Direkt JSON string olabilir
+                        val json = JSONObject(dataText)
+                        val ciphertext = if (json.has("ciphertext")) json.getString("ciphertext") else ""
+                        val iv = if (json.has("iv")) json.getString("iv") else ""
+                        val salt = if (json.has("salt")) json.getString("salt") else ""
+                        
+                        if (ciphertext.isNotEmpty() && iv.isNotEmpty() && salt.isNotEmpty()) {
+                            return EncryptedData(ciphertext, iv, salt)
+                        }
+                    }
+                } catch (e: Exception) {
+                    // JSON parse hatası - Python'da da try-except kullanıyor
+                }
+            }
+        } catch (e: Exception) {
+            // Hata durumunda null dön
+        }
+        return null
+    }
+
+    // ADIM 0: Şifreli veriyi decrypt et (PBKDF2-SHA512 + AES-CBC)
+    private fun decryptIframeUrl(encryptedData: EncryptedData): String? {
+        try {
+            // Hex string'leri byte array'e çevir
+            val saltBytes = hexStringToByteArray(encryptedData.salt)
+            val ivBytes = hexStringToByteArray(encryptedData.iv)
+            val ciphertextBytes = Base64.decode(encryptedData.ciphertext, Base64.DEFAULT)
+            
+            // PBKDF2-SHA512 ile key derivation (999 iterations)
+            val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA512")
+            val spec = PBEKeySpec(PASSPHRASE.toCharArray(), saltBytes, 999, 256)
+            val tmpKey = factory.generateSecret(spec)
+            val key = SecretKeySpec(tmpKey.encoded, "AES")
+            
+            // AES-CBC decrypt
+            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+            cipher.init(Cipher.DECRYPT_MODE, key, IvParameterSpec(ivBytes))
+            val decrypted = cipher.doFinal(ciphertextBytes)
+            val iframeUrl = String(decrypted, Charsets.UTF_8).trim()
+            
+            // URL'i düzelt
+            return when {
+                iframeUrl.startsWith("//") -> "https:$iframeUrl"
+                iframeUrl.startsWith("http") -> iframeUrl
+                else -> "https://$iframeUrl"
+            }
+        } catch (e: Exception) {
+            return null
+        }
+    }
+
+    // Hex string'i byte array'e çevir
+    private fun hexStringToByteArray(hex: String): ByteArray {
+        val len = hex.length
+        val data = ByteArray(len / 2)
+        var i = 0
+        while (i < len) {
+            data[i / 2] = ((Character.digit(hex[i], 16) shl 4) + Character.digit(hex[i + 1], 16)).toByte()
+            i += 2
+        }
+        return data
+    }
+
+    // ADIM 1: iframe URL'inden player URL çıkar
+    private suspend fun getPlayerUrl(iframeUrl: String): String? {
+        try {
+            val headers = mapOf(
+                "Referer" to "${mainUrl}/",
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                "Accept-Language" to "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+                "Origin" to mainUrl.replace(Regex("/$"), ""),
+                "Connection" to "keep-alive",
+                "Upgrade-Insecure-Requests" to "1",
+                "Sec-Fetch-Dest" to "iframe",
+                "Sec-Fetch-Mode" to "navigate",
+                "Sec-Fetch-Site" to "cross-site"
+            )
+            
+            val response = app.get(iframeUrl, headers = headers, interceptor = interceptor)
+            val html = response.text
+            
+            // window.openPlayer() içinden player URL çıkar - Python'daki pattern'ler
+            var match = Regex("""window\.openPlayer\(['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE).find(html)
+            if (match != null) {
+                return match.groupValues[1]
+            }
+            
+            // Alternatif pattern'ler (Python kodundan)
+            val altPatterns = listOf(
+                Regex("""openPlayer\(['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE),
+                Regex("""player.*?['"]([^'"]+source2[^'"]+)['"]""", RegexOption.IGNORE_CASE),
+                Regex("""source2\.php\?v=([a-zA-Z0-9]+)""", RegexOption.IGNORE_CASE)
+            )
+            
+            for (pattern in altPatterns) {
+                match = pattern.find(html)
+                if (match != null) {
+                    return match.groupValues[1]
+                }
+            }
+            
+            return null
+        } catch (e: Exception) {
+            return null
+        }
+    }
+
+    // ADIM 2: source2.php'den M3U8 URL çıkar
+    private suspend fun getM3u8Url(playerUrl: String, iframeUrl: String): String? {
+        try {
+            val url = URL(iframeUrl)
+            val mainDomain = "${url.protocol}://${url.host}"
+            val source2Url = "$mainDomain$SOURCE2_PATH$playerUrl"
+            
+            // Origin'i Python'daki gibi parse et: iframe_url.split('/')[0] + '//' + iframe_url.split('/')[2]
+            val originUrl = URL(iframeUrl)
+            val origin = "${originUrl.protocol}://${originUrl.host}"
+            
+            val headers = mapOf(
+                "Referer" to iframeUrl,
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                "Accept-Language" to "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+                "Origin" to origin,
+                "Connection" to "keep-alive",
+                "Upgrade-Insecure-Requests" to "1",
+                "Sec-Fetch-Dest" to "document",
+                "Sec-Fetch-Mode" to "navigate",
+                "Sec-Fetch-Site" to "cross-site"
+            )
+            
+            val response = app.get(source2Url, headers = headers, interceptor = interceptor)
+            val html = response.text
+            
+            // "file":"..." pattern'inden M3U8 URL çıkar - Python'daki tüm pattern'ler
+            val patterns = listOf(
+                Regex("""\"file\":\"([^\"]+)\""""),  // İlk pattern
+                Regex("""\"file\":\"((?:\\\\\"|[^\"]+))\""""),  // Escaped quotes için
+                Regex("""\"file\"\s*:\s*\"([^\"]+)\""""),  // Whitespace ile
+                Regex("""file["']?\s*:\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)  // Alternatif quotes
+            )
+            
+            for (pattern in patterns) {
+                val match = pattern.find(html)
+                if (match != null) {
+                    var m3u8Url = match.groupValues[1]
+                    // Python'daki gibi escape karakterlerini temizle
+                    m3u8Url = m3u8Url.replace("\\/", "/")
+                        .replace("\\u0026", "&")
+                        .replace("\\\\\"", "\"")
+                        .replace("\\\\", "")
+                        .replace("\\", "")
+                    
+                    // M3U8 kontrolü
+                    if (m3u8Url.contains(".m3u8", ignoreCase = true)) {
+                        return m3u8Url
+                    }
+                }
+            }
+            
+            // Direkt M3U8 URL regex (Python'daki son pattern)
+            val m3u8Match = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""", RegexOption.IGNORE_CASE).find(html)
+            return m3u8Match?.groupValues?.get(0)
+        } catch (e: Exception) {
+            // Hata durumunda null dön
+        }
+        return null
+    }
+
+    override suspend fun loadLinks(data: String, isCasting: Boolean, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
+        // ADIM -1: Şifreli veriyi çıkar
+        val encryptedData = extractEncryptedDataFromUrl(data)
+        if (encryptedData == null) {
+            // Fallback: Eski yöntemle iframe ara
+            return loadLinksFallback(data, subtitleCallback, callback)
+        }
+
+        // ADIM 0: iframe URL'ini decrypt et
+        val iframeUrl = decryptIframeUrl(encryptedData)
+        if (iframeUrl == null) {
+            return loadLinksFallback(data, subtitleCallback, callback)
+        }
+
+        // ADIM 1: Player URL'i çıkar
+        val playerUrl = getPlayerUrl(iframeUrl)
+        if (playerUrl == null) {
+            // Player URL bulunamazsa iframe'i direkt loadExtractor'a gönder
+            loadExtractor(iframeUrl, "${mainUrl}/", subtitleCallback, callback)
+            return true
+        }
+
+        // ADIM 2: M3U8 URL'i çıkar
+        val m3u8Url = getM3u8Url(playerUrl, iframeUrl)
+        if (m3u8Url != null) {
+            callback.invoke(
+                newExtractorLink(
+                    source = name,
+                    name = name,
+                    url = m3u8Url,
+                    type = ExtractorLinkType.M3U8
+                ) {
+                    this.headers = mapOf("Referer" to iframeUrl)
+                    this.quality = Qualities.Unknown.value
+                }
+            )
+            return true
+        }
+
+        // M3U8 bulunamazsa iframe'i loadExtractor'a gönder
+        loadExtractor(iframeUrl, "${mainUrl}/", subtitleCallback, callback)
+        return true
+    }
+
+    // Fallback: Eski iframe bulma yöntemi
+    private suspend fun loadLinksFallback(data: String, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
+        val document = app.get(data, referer = data).document
         val iframes = mutableListOf<String>()
 
-        // 1. Önce tüm iframe'leri bul (data-src ve src attribute'larını kontrol et)
+        // Tüm iframe'leri bul
         document.select("iframe").forEach { iframe ->
             val src = iframe.attr("data-src").takeIf { it.isNotEmpty() } 
                 ?: iframe.attr("src").takeIf { it.isNotEmpty() }
@@ -712,49 +977,13 @@ class Dizipal : MainAPI() {
             }
         }
 
-        // 2. iframe-container içindeki iframe'leri bul
-        if (iframes.isEmpty()) {
-            document.select("div.iframe-container iframe").forEach { iframe ->
-                val src = iframe.attr("data-src").takeIf { it.isNotEmpty() } 
-                    ?: iframe.attr("src").takeIf { it.isNotEmpty() }
-                src?.let { 
-                    fixUrlNull(it)?.let { iframes.add(it) }
-                }
-            }
-        }
-
-        // 3. videoIframe ID'li iframe'i bul
-        if (iframes.isEmpty()) {
-            document.selectFirst("#videoIframe")?.let { iframe ->
-                val src = iframe.attr("data-src").takeIf { it.isNotEmpty() } 
-                    ?: iframe.attr("src").takeIf { it.isNotEmpty() }
-                src?.let { 
-                    fixUrlNull(it)?.let { iframes.add(it) }
-                }
-            }
-        }
-
-        // 4. Video player container'ları kontrol et
-        if (iframes.isEmpty()) {
-            document.selectFirst("div.video-player, div.player, div#player")?.let { container ->
-                container.select("iframe").forEach { iframe ->
-                    val src = iframe.attr("data-src").takeIf { it.isNotEmpty() } 
-                        ?: iframe.attr("src").takeIf { it.isNotEmpty() }
-                    src?.let { 
-                        fixUrlNull(it)?.let { iframes.add(it) }
-                    }
-                }
-            }
-        }
-
-        // 5. Script içinde iframe URL'leri ara (dinamik yükleme için)
+        // Script içinde iframe URL'leri ara
         if (iframes.isEmpty()) {
             val htmlContent = document.html()
             val iframePatterns = listOf(
                 Regex("""iframe\s+src\s*=\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE),
                 Regex("""iframe\s+data-src\s*=\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE),
-                Regex("""videoIframe\.src\s*=\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE),
-                Regex("""setAttribute\(['"]src['"],\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
+                Regex("""videoIframe\.src\s*=\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
             )
             
             iframePatterns.forEach { pattern ->
@@ -770,14 +999,14 @@ class Dizipal : MainAPI() {
             }
         }
 
-        // 6. Bulunan iframe'leri loadExtractor'a gönder
+        // Bulunan iframe'leri loadExtractor'a gönder
         if (iframes.isNotEmpty()) {
             for (iframe in iframes) {
                 if (iframe.isNotEmpty()) {
                     loadExtractor(iframe, "${mainUrl}/", subtitleCallback, callback)
                 }
             }
-        return true
+            return true
         }
 
         return false
