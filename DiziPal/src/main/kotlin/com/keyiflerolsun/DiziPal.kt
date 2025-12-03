@@ -126,7 +126,7 @@ class Dizipal : MainAPI() {
         // Ana sayfa ise direkt HTML'den Trend Diziler'i çek
         if (isHomePage) {
             val document = app.get(mainUrl).document
-            
+        
             // Trend Diziler bölümünü çek - HTML'den direkt al, filtre yok
             val trends = document.select("ul.trends li").mapNotNull { it.toTrendResult() }
             val finalTrends = if (trends.isNotEmpty()) {
@@ -139,8 +139,8 @@ class Dizipal : MainAPI() {
                 } else {
                     // Daha fazla alternatif dene
                     document.select("article.movie-type-genres ul.trends li").mapNotNull { it.toTrendResult() }
-                        .distinctBy { it.url }
-                }
+                    .distinctBy { it.url }
+            }
             }
             
             return newHomePageResponse(request.name, finalTrends)
@@ -396,206 +396,31 @@ class Dizipal : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         val document = app.get("${mainUrl}/?s=${query}").document
 
-        // Java kodundaki mantık: Tüm olası container'ları kontrol et ve toMainPageResult benzeri mantıkla parse et
-        
-        // 1. Önce a[data-dizipalx-pageloader] yapısını kontrol et (gerçek arama sonuçları - koparan gibi)
-        val searchLinks = document.select("a[data-dizipalx-pageloader]")
-        if (searchLinks.isNotEmpty()) {
-            val results = searchLinks.mapNotNull { it.toJavaSearchResult() }
-                .distinctBy { it.url }
-            if (results.isNotEmpty()) {
-                return results
-            }
-        }
-        
-        // 2. ul.trends li yapısını kontrol et (ana sayfa gibi - wedn gibi)
-        val trendResults = document.select("ul.trends li").mapNotNull { it.toTrendResult() }
-            .distinctBy { it.url }
-        if (trendResults.isNotEmpty()) {
-            return trendResults
-        }
-        
-        // 3. article elementlerini kontrol et ve Java kodundaki toMainPageResult mantığıyla parse et
-        val articleResults = document.select("article").mapNotNull { it.toJavaSearchResult() }
-            .distinctBy { it.url }
-        if (articleResults.isNotEmpty()) {
-            return articleResults
-        }
-        
-        // 4. Son çare: div.result-item article veya div.items article
-        val altResults = document.select("div.result-item article, div.items article")
-            .mapNotNull { it.toJavaSearchResult() }
-            .distinctBy { it.url }
-        
-        return altResults
-    }
-
-    /**
-     * Java kodundaki toMainPageResult mantığını taklit eden search result parser
-     * Java kodundaki mantık:
-     * 1. div.text.block div.text-white.text-sm kontrolü
-     * 2. Varsa: img.alt + ' ' + textElement.text()
-     * 3. Yoksa: img.alt
-     * 4. /bolum/ URL'lerini /series/ olarak düzelt
-     * 5. img.data-src ile poster
-     * 6. h4 ile IMDB puanı
-     */
-    private fun Element.toJavaSearchResult(): SearchResponse? {
-        // Java kodundaki mantık: Title için div.text.block div.text-white.text-sm kontrolü
-        val textElement = this.selectFirst("div.text.block div.text-white.text-sm")
-        val title: String
-        
-        // Önce h2 kontrolü (arama sayfasında h2 var)
-        val h2Title = this.selectFirst("div.text.block h2, h2")?.text()?.trim()
-        
-        if (h2Title != null && h2Title.isNotBlank()) {
-            title = h2Title
-        } else if (textElement != null && textElement.text().isNotBlank()) {
-            // Java mantığı: Eğer text element varsa, img alt + text element birleştir
-            val imgAlt = this.selectFirst("img")?.attr("alt")?.trim() ?: ""
-            title = if (imgAlt.isNotEmpty()) "$imgAlt ${textElement.text().trim()}" else textElement.text().trim()
-        } else {
-            // Java mantığı: Eğer text element yoksa, img alt'ını kullan
-            val imgAlt = this.selectFirst("img")?.attr("alt")?.trim() ?: return null
-            title = imgAlt
-        }
-        
-        if (title.isBlank()) return null
-        
-        // URL: a tag'inin href'i (kendisi a tag'i olabilir veya içinde a tag'i olabilir)
-        val aEl = if (this.tagName() == "a") this else this.selectFirst("a")
-        if (aEl == null) return null
-        
-        val rawHref = aEl.attr("href") ?: return null
-        if (rawHref.isBlank()) return null
-        
-        // Java kodundaki mantık: /bolum/ URL'lerini /series/ olarak düzelt ve bölüm numarasını temizle
-        val href = if (rawHref.contains("/bolum/")) {
-            val fixed = fixUrlNull(rawHref)?.replace("/bolum/", "/series/")
-            fixed?.replace(Regex("-[0-9]+x.*$"), "") ?: return null
-        } else {
-            fixUrlNull(rawHref) ?: return null
-        }
-        
-        // Java kodundaki mantık: Poster için img.data-src
-        val posterUrl = fixUrlNull(this.selectFirst("img")?.attr("data-src"))
-        
-        // Java kodundaki mantık: IMDB Puanı için h4
-        val imdbScoreText = this.selectFirst("h4")?.text()?.trim()
-        val imdbScore = if (imdbScoreText != null && imdbScoreText != "0.0") {
-            imdbScoreText.toRatingDouble()?.let { Score.from10(it) }
-        } else {
-            null
-        }
-        
-        // Java kodundaki mantık: /movies/ varsa film, diğer durumlarda dizi
-        val isMovie = href.contains("/movies/", ignoreCase = true)
-        val tvType = if (isMovie) TvType.Movie else TvType.TvSeries
-
-        return if (tvType == TvType.TvSeries) {
-            newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
-                this.posterUrl = posterUrl
-                this.score = imdbScore
-            }
-        } else {
-            newMovieSearchResponse(title, href, TvType.Movie) {
-                this.posterUrl = posterUrl
-                this.score = imdbScore
-            }
-        }
+        return document.select("div.result-item article").mapNotNull { it.toSearchResult() }
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        // Java kodundaki mantık: Title için div.text.block div.text-white.text-sm kontrolü
-        val textElement = this.selectFirst("div.text.block div.text-white.text-sm")
-        val title: String
+        val title     = this.selectFirst("div.title a")?.text() ?: return null
+        val rawHref   = this.selectFirst("div.title a")?.attr("href") ?: return null
         
-        if (textElement == null || textElement.text().isBlank()) {
-            // Eğer text element yoksa, img alt'ını kullan
-            val imgAlt = this.selectFirst("img")?.attr("alt") ?: return null
-            title = imgAlt
-        } else {
-            // Eğer text element varsa, img alt + text element birleştir
-            val imgAlt = this.selectFirst("img")?.attr("alt") ?: ""
-            title = if (imgAlt.isNotEmpty()) "$imgAlt ${textElement.text()}" else textElement.text()
-        }
-        
-        // URL: a tag'inin href'i
-        val aEl = this.selectFirst("a") ?: return null
-        val rawHref = aEl.attr("href")
-        
-        // /bolum/ URL'lerini /series/ olarak düzelt ve bölüm numarasını temizle (Java kodundaki gibi)
-        val href = if (rawHref.contains("/bolum/")) {
+        // /bolum/ URL'lerini /series/ olarak düzelt ve bölüm numarasını temizle
+        var href = if (rawHref.contains("/bolum/")) {
             val fixed = fixUrlNull(rawHref)?.replace("/bolum/", "/series/")
             fixed?.replace(Regex("-[0-9]+x.*$"), "") ?: return null
         } else {
             fixUrlNull(rawHref) ?: return null
         }
         
-        // Poster: img tag'inin data-src attribute'u (Java kodundaki gibi)
-        val posterUrl = fixUrlNull(this.selectFirst("img")?.attr("data-src"))
+        val posterUrl = fixUrlNull(this.selectFirst("img")?.attr("src"))
         
-        // IMDB Puanı: h4 tag'inden al (Java kodundaki gibi)
-        val imdbScoreText = this.selectFirst("h4")?.text()?.trim()
-        val imdbScore = if (imdbScoreText != null && imdbScoreText != "0.0") {
-            imdbScoreText.toRatingDouble()?.let { Score.from10(it) }
-        } else {
-            null
-        }
-        
-        // Tip belirleme: /movies/ varsa film, diğer durumlarda dizi
-        val isMovie = href.contains("/movies/", ignoreCase = true)
-        val tvType = if (isMovie) TvType.Movie else TvType.TvSeries
+        // Detaylı tip belirleme (dizi/film)
+        val isTvSeries = determineTvType(href, title)
+        val tvType = if (isTvSeries) TvType.TvSeries else TvType.Movie
 
         return if (tvType == TvType.TvSeries) {
-            newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
-                this.posterUrl = posterUrl
-                this.score = imdbScore
-            }
+            newTvSeriesSearchResponse(title, href, TvType.TvSeries) { this.posterUrl = posterUrl }
         } else {
-            newMovieSearchResponse(title, href, TvType.Movie) {
-                this.posterUrl = posterUrl
-                this.score = imdbScore
-            }
-        }
-    }
-
-    private fun Element.toSearchResultLink(): SearchResponse? {
-        // a[data-dizipalx-pageloader] yapısı için parse (koparan gibi aramalar)
-        try {
-            val rawHref = this.attr("href") ?: return null
-            
-            // /bolum/ URL'lerini /series/ olarak düzelt ve bölüm numarasını temizle
-            val href = if (rawHref.contains("/bolum/")) {
-                val fixed = fixUrlNull(rawHref)?.replace("/bolum/", "/series/")
-                fixed?.replace(Regex("-[0-9]+x.*$"), "") ?: return null
-            } else {
-                fixUrlNull(rawHref) ?: return null
-            }
-            
-            // Title: div.text.block h2 veya img alt
-            val title = this.selectFirst("div.text.block h2")?.text()?.trim()
-                ?: this.selectFirst("img")?.attr("alt")?.trim()
-                ?: return null
-            
-            // Poster: img tag'inin data-src attribute'u
-            val posterUrl = fixUrlNull(this.selectFirst("img")?.attr("data-src"))
-            
-            // Tip belirleme
-            val isMovie = href.contains("/movies/", ignoreCase = true)
-            val tvType = if (isMovie) TvType.Movie else TvType.TvSeries
-            
-            return if (tvType == TvType.TvSeries) {
-                newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
-                    this.posterUrl = posterUrl
-                }
-            } else {
-                newMovieSearchResponse(title, href, TvType.Movie) {
-                    this.posterUrl = posterUrl
-                }
-            }
-        } catch (e: Exception) {
-            return null
+            newMovieSearchResponse(title, href, TvType.Movie) { this.posterUrl = posterUrl }
         }
     }
 
@@ -741,6 +566,7 @@ class Dizipal : MainAPI() {
                     val urlMatch = Regex("""-(\d+)x(\d+)(?:\.|$)""").find(epHref)
                     val epSeasonFromUrl = urlMatch?.groupValues?.get(1)?.toIntOrNull()
                     val epEpisodeFromUrl = urlMatch?.groupValues?.get(2)?.toIntOrNull()
+                    
                     // Episode numarası için span'a da bak
                     val epNumber = episodeDiv.selectFirst("span.text-white.opacity-60")?.text()?.trim()?.toIntOrNull()
                     
@@ -762,13 +588,13 @@ class Dizipal : MainAPI() {
             episodes.addAll(document.select("div.episodes article, div.bolumler article, div.seasons article").mapNotNull {
                 val epName = it.selectFirst("a")?.text()?.trim() ?: return@mapNotNull null
                 val epHref = fixUrlNull(it.selectFirst("a")?.attr("href")) ?: return@mapNotNull null
-                val epEpisode = Regex("""(\d+)\.?\s*[Bb]ölüm""").find(epName)?.groupValues?.get(1)?.toIntOrNull()
+            val epEpisode = Regex("""(\d+)\.?\s*[Bb]ölüm""").find(epName)?.groupValues?.get(1)?.toIntOrNull()
                 val epSeason = Regex("""(\d+)\.?\s*[Ss]ezon""").find(epName)?.groupValues?.get(1)?.toIntOrNull() ?: 1
 
-                newEpisode(epHref) {
+            newEpisode(epHref) {
                     this.name = epName
                     this.season = epSeason
-                    this.episode = epEpisode
+                this.episode = epEpisode
                     // Bölüm için dizinin ana poster/backdrop resmini kullan
                     this.posterUrl = poster
                 }
@@ -951,7 +777,7 @@ class Dizipal : MainAPI() {
                     loadExtractor(iframe, "${mainUrl}/", subtitleCallback, callback)
                 }
             }
-            return true
+        return true
         }
 
         return false
