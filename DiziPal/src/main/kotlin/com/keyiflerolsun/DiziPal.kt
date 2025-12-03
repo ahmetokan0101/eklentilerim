@@ -933,82 +933,97 @@ class Dizipal : MainAPI() {
             return loadLinksFallback(data, subtitleCallback, callback)
         }
 
+        // ÖNEMLİ: iframe URL'ini önce direkt extractor'a gönder (hemen çalışsın)
+        // Extractors daha iyi sonuç verebilir veya alternatif formatlar bulabilir
+        loadExtractor(iframeUrl, "${mainUrl}/", subtitleCallback, callback)
+
         // ADIM 1: Player URL'i çıkar
         val playerUrl = getPlayerUrl(iframeUrl)
-        if (playerUrl == null) {
-            // Player URL bulunamazsa iframe'i direkt loadExtractor'a gönder
-            loadExtractor(iframeUrl, "${mainUrl}/", subtitleCallback, callback)
-            return true
+        
+        // ADIM 2: M3U8 URL'i çıkar (direkt stream URL)
+        if (playerUrl != null) {
+            val m3u8Url = getM3u8Url(playerUrl, iframeUrl)
+            if (m3u8Url != null && m3u8Url.isNotEmpty()) {
+                callback.invoke(
+                    newExtractorLink(
+                        source = name,
+                        name = name,
+                        url = m3u8Url,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.headers = mapOf("Referer" to iframeUrl)
+                        this.quality = Qualities.Unknown.value
+                    }
+                )
+            }
         }
-
-        // ADIM 2: M3U8 URL'i çıkar
-        val m3u8Url = getM3u8Url(playerUrl, iframeUrl)
-        if (m3u8Url != null) {
-            callback.invoke(
-                newExtractorLink(
-                    source = name,
-                    name = name,
-                    url = m3u8Url,
-                    type = ExtractorLinkType.M3U8
-                ) {
-                    this.headers = mapOf("Referer" to iframeUrl)
-                    this.quality = Qualities.Unknown.value
-                }
-            )
-            return true
-        }
-
-        // M3U8 bulunamazsa iframe'i loadExtractor'a gönder
-        loadExtractor(iframeUrl, "${mainUrl}/", subtitleCallback, callback)
+        
+        // Her durumda true dön - extractor'lar en azından bir şey bulmalı
         return true
     }
 
     // Fallback: Eski iframe bulma yöntemi
     private suspend fun loadLinksFallback(data: String, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
-        val document = app.get(data, referer = data).document
-        val iframes = mutableListOf<String>()
+        try {
+            val document = app.get(data, referer = data, interceptor = interceptor).document
+            val iframes = mutableListOf<String>()
 
-        // Tüm iframe'leri bul
-        document.select("iframe").forEach { iframe ->
-            val src = iframe.attr("data-src").takeIf { it.isNotEmpty() } 
-                ?: iframe.attr("src").takeIf { it.isNotEmpty() }
-            src?.let { 
-                fixUrlNull(it)?.let { iframes.add(it) }
+            // Tüm iframe'leri bul - önce data-src, sonra src
+            document.select("iframe").forEach { iframe ->
+                val src = iframe.attr("data-src").takeIf { it.isNotEmpty() } 
+                    ?: iframe.attr("src").takeIf { it.isNotEmpty() }
+                src?.let { 
+                    fixUrlNull(it)?.let { 
+                        if (it.isNotEmpty() && !iframes.contains(it)) {
+                            iframes.add(it)
+                        }
+                    }
+                }
             }
-        }
 
-        // Script içinde iframe URL'leri ara
-        if (iframes.isEmpty()) {
-            val htmlContent = document.html()
-            val iframePatterns = listOf(
-                Regex("""iframe\s+src\s*=\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE),
-                Regex("""iframe\s+data-src\s*=\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE),
-                Regex("""videoIframe\.src\s*=\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
-            )
-            
-            iframePatterns.forEach { pattern ->
-                pattern.findAll(htmlContent).forEach { match ->
-                    match.groupValues.getOrNull(1)?.let { url ->
-                        fixUrlNull(url)?.let { 
-                            if (!iframes.contains(it)) {
-                                iframes.add(it)
+            // Script içinde iframe URL'leri ara
+            if (iframes.isEmpty()) {
+                val htmlContent = document.html()
+                val iframePatterns = listOf(
+                    Regex("""iframe\s+src\s*=\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE),
+                    Regex("""iframe\s+data-src\s*=\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE),
+                    Regex("""videoIframe\.src\s*=\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE),
+                    Regex("""src\s*[:=]\s*['"]([^'"]*player[^'"]*)['"]""", RegexOption.IGNORE_CASE),
+                    Regex("""window\.location\s*=\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
+                )
+                
+                iframePatterns.forEach { pattern ->
+                    pattern.findAll(htmlContent).forEach { match ->
+                        match.groupValues.getOrNull(1)?.let { url ->
+                            fixUrlNull(url)?.let { 
+                                if (it.isNotEmpty() && !iframes.contains(it) && 
+                                    !it.contains("ads") && !it.contains("google") && 
+                                    !it.contains("facebook") && !it.contains("doubleclick")) {
+                                    iframes.add(it)
+                                }
                             }
                         }
                     }
                 }
             }
-        }
 
-        // Bulunan iframe'leri loadExtractor'a gönder
-        if (iframes.isNotEmpty()) {
-            for (iframe in iframes) {
-                if (iframe.isNotEmpty()) {
-                    loadExtractor(iframe, "${mainUrl}/", subtitleCallback, callback)
+            // Bulunan iframe'leri loadExtractor'a gönder
+            if (iframes.isNotEmpty()) {
+                for (iframe in iframes) {
+                    if (iframe.isNotEmpty()) {
+                        loadExtractor(iframe, "${mainUrl}/", subtitleCallback, callback)
+                    }
                 }
+                return true
             }
+
+            // Eğer hiç iframe bulunamazsa, sayfanın kendisini extractor'a gönder (son çare)
+            loadExtractor(data, "${mainUrl}/", subtitleCallback, callback)
+            return true
+        } catch (e: Exception) {
+            // Hata durumunda da sayfayı extractor'a gönder
+            loadExtractor(data, "${mainUrl}/", subtitleCallback, callback)
             return true
         }
-
-        return false
     }
 }
