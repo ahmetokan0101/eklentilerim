@@ -1,0 +1,36 @@
+package com.kraptor;
+
+import kotlin.Metadata;
+import org.jetbrains.annotations.NotNull;
+
+/* compiled from: HotlingerExtractor.kt */
+@Metadata(d1 = {"\u0000\u0014\n\u0002\u0018\u0002\n\u0002\u0018\u0002\n\u0002\b\u0003\n\u0002\u0010\u000e\n\u0002\b\b\u0018\u00002\u00020\u0001B\u0007¢\u0006\u0004\b\u0002\u0010\u0003R\u001a\u0010\u0004\u001a\u00020\u0005X\u0096\u000e¢\u0006\u000e\n\u0000\u001a\u0004\b\u0006\u0010\u0007\"\u0004\b\b\u0010\tR\u001a\u0010\n\u001a\u00020\u0005X\u0096\u000e¢\u0006\u000e\n\u0000\u001a\u0004\b\u000b\u0010\u0007\"\u0004\b\f\u0010\t¨\u0006\r"}, d2 = {"Lcom/kraptor/FourPlayRu;", "Lcom/kraptor/ContentX;", "<init>", "()V", "name", "", "getName", "()Ljava/lang/String;", "setName", "(Ljava/lang/String;)V", "mainUrl", "getMainUrl", "setMainUrl", "DiziPalOrijinal_debug"}, k = 1, mv = {2, 1, 0}, xi = 48)
+/* loaded from: classes.dex */
+public final class FourPlayRu extends ContentX {
+
+    @NotNull
+    private String name = "FourPlayRu";
+
+    @NotNull
+    private String mainUrl = "https://four.playru.net";
+
+    @Override // com.kraptor.ContentX
+    @NotNull
+    public String getName() {
+        return this.name;
+    }
+
+    public void setName(@NotNull String str) {
+        this.name = str;
+    }
+
+    @Override // com.kraptor.ContentX
+    @NotNull
+    public String getMainUrl() {
+        return this.mainUrl;
+    }
+
+    public void setMainUrl(@NotNull String str) {
+        this.mainUrl = str;
+    }
+}

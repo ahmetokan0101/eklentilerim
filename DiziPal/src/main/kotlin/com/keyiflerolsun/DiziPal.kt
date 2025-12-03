@@ -401,10 +401,205 @@ class Dizipal : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val document = app.get("${mainUrl}/?s=${query}").document
-
-        return document.select("div.result-item article").mapNotNull { it.toSearchResult() }
+        // Python scriptindeki gibi POST isteği yap
+        // API endpoint ve form parametreleri
+        val searchEndpoint = "/bg/searchcontent"
+        val cKey = "ca1d4a53d0f4761a949b85e51e18f096"
+        val cValue = "MTc2NDgwNDAwMGFiNmI2ZDEzNDg1ZmE4MjQyZmU2YzRhNzc0OTE2NTM3NjQyMTU5MjljMWQzMzliNzY5NzFlZmViMzRhMGVmNjgwODU3MGIyZA=="
+        
+        // Minimum 3 karakter kontrolü
+        if (query.length < 3) {
+            return emptyList()
+        }
+        
+        try {
+            // Form data
+            val formData = mapOf(
+                "searchterm" to query,
+                "cKey" to cKey,
+                "cValue" to cValue
+            )
+            
+            // Headers
+            val headers = mapOf(
+                "Accept" to "application/json, text/javascript, */*; q=0.01",
+                "Accept-Language" to "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+                "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
+                "Referer" to mainUrl,
+                "Origin" to mainUrl.replace(Regex("/$"), ""),
+                "X-Requested-With" to "XMLHttpRequest"
+            )
+            
+            // POST isteği
+            val response = app.post(
+                url = "${mainUrl.replace(Regex("/$"), "")}$searchEndpoint",
+                headers = headers,
+                data = formData,
+                interceptor = interceptor
+            )
+            
+            // JSON response parse et
+            val jsonResponse = response.parsedSafe<SearchApiResponse>()
+            
+            // State kontrolü
+            if (jsonResponse?.data?.state != true) {
+                return emptyList()
+            }
+            
+            // Önce JSON result'ları kontrol et (daha güvenilir)
+            val jsonResults = jsonResponse.data?.result
+            if (!jsonResults.isNullOrEmpty()) {
+                return jsonResults.mapNotNull { result ->
+                    val title = result.object_name ?: return@mapNotNull null
+                    val slug = result.used_slug ?: return@mapNotNull null
+                    val href = "${mainUrl.replace(Regex("/$"), "")}/$slug"
+                    val posterUrl = result.object_poster_url?.let { fixUrlNull(it) }
+                    
+                    val isTvSeries = determineTvType(href, title)
+                    val tvType = if (isTvSeries) TvType.TvSeries else TvType.Movie
+                    
+                    if (tvType == TvType.TvSeries) {
+                        newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
+                            this.posterUrl = posterUrl
+                        }
+                    } else {
+                        newMovieSearchResponse(title, href, TvType.Movie) {
+                            this.posterUrl = posterUrl
+                        }
+                    }
+                }
+            }
+            
+            // JSON yoksa HTML içeriğini al
+            val htmlContent = jsonResponse.data?.html ?: return emptyList()
+            
+            // HTML'i parse et
+            val document = Jsoup.parse(htmlContent)
+            
+            // Sonuçları bul - Python'daki gibi farklı selector'lar dene
+            // Python: find_all(['a', 'li', 'div'], class_=lambda x: x and ('item' in x.lower() or 'result' in x.lower() or 'card' in x.lower()))
+            var items = document.select("a[class*='item'], a[class*='result'], a[class*='card'], " +
+                    "li[class*='item'], li[class*='result'], li[class*='card'], " +
+                    "div[class*='item'], div[class*='result'], div[class*='card'], " +
+                    "div.result-item article, a[href*='/bolum/'], a[href*='/series/'], a[href*='/film/']")
+            
+            // Eğer sonuç bulunamazsa, alternatif selector'lar dene (Python'daki gibi)
+            if (items.isEmpty()) {
+                items = document.select("a[href]")
+            }
+            
+            // SearchResponse listesi oluştur
+            return items.mapNotNull { element ->
+                // Link bul
+                val linkElement = if (element.tagName() == "a") {
+                    element
+                } else {
+                    element.selectFirst("a[href]")
+                } ?: return@mapNotNull null
+                
+                val rawHref = linkElement.attr("href") ?: return@mapNotNull null
+                val href = if (rawHref.startsWith("http")) {
+                    rawHref
+                } else {
+                    "${mainUrl.replace(Regex("/$"), "")}$rawHref"
+                }
+                
+                // Başlık bul
+                val title = linkElement.text()?.takeIf { it.isNotBlank() }
+                    ?: element.selectFirst("img")?.attr("alt")
+                    ?: element.text()?.takeIf { it.isNotBlank() }
+                    ?: return@mapNotNull null
+                
+                // Poster URL bul - Python'daki gibi detaylı kontrol
+                val imgElement = element.selectFirst("img")
+                val posterUrl = when {
+                    imgElement == null -> null
+                    else -> {
+                        // Önce data-srcset'i kontrol et (lazyload için) - Python'daki gibi
+                        val srcset = imgElement.attr("data-srcset")
+                        when {
+                            srcset.isNotBlank() -> {
+                                // srcset formatı: "url1 1x, url2 2x" - 2x olanı al
+                                val srcsetParts = srcset.split(",")
+                                val url2x = srcsetParts.find { it.contains("2x") }
+                                if (url2x != null) {
+                                    url2x.trim().split(" ").firstOrNull()?.let { fixUrlNull(it) }
+                                } else {
+                                    // 2x yoksa 1x'i al
+                                    srcsetParts.firstOrNull()?.trim()?.split(" ")?.firstOrNull()?.let { fixUrlNull(it) }
+                                }
+                            }
+                            // data-srcset yoksa data-src'i dene
+                            imgElement.attr("data-src").isNotBlank() -> {
+                                fixUrlNull(imgElement.attr("data-src"))
+                            }
+                            // Son çare: src'i kullan (ama placeholder olmamalı)
+                            else -> {
+                                val src = imgElement.attr("src")
+                                if (src.isNotBlank() && !src.startsWith("data:image")) {
+                                    fixUrlNull(src)
+                                } else {
+                                    null
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Tip belirleme
+                val isTvSeries = determineTvType(href, title)
+                val tvType = if (isTvSeries) TvType.TvSeries else TvType.Movie
+                
+                // /bolum/ URL'lerini /series/ olarak düzelt
+                val fixedHref = if (href.contains("/bolum/")) {
+                    href.replace("/bolum/", "/series/").replace(Regex("-[0-9]+x.*$"), "")
+                } else {
+                    href
+                }
+                
+                if (tvType == TvType.TvSeries) {
+                    newTvSeriesSearchResponse(title, fixedHref, TvType.TvSeries) { 
+                        this.posterUrl = posterUrl 
+                    }
+                } else {
+                    newMovieSearchResponse(title, fixedHref, TvType.Movie) { 
+                        this.posterUrl = posterUrl 
+                    }
+                }
+            }.distinctBy { it.url } // Duplicate'leri kaldır
+        } catch (e: Exception) {
+            // Hata durumunda eski yöntemi dene (fallback)
+            return try {
+                val document = app.get("${mainUrl}/?s=${query}", interceptor = interceptor).document
+                document.select("div.result-item article").mapNotNull { it.toSearchResult() }
+            } catch (e2: Exception) {
+                emptyList()
+            }
+        }
     }
+    
+    // Search API Response data class
+    private data class SearchApiResponse(
+        @JsonProperty("data") val data: SearchData?,
+        @JsonProperty("message") val message: String?
+    )
+    
+    private data class SearchData(
+        @JsonProperty("state") val state: Boolean?,
+        @JsonProperty("html") val html: String?,
+        @JsonProperty("result") val result: List<SearchResultItem>?
+    )
+    
+    private data class SearchResultItem(
+        @JsonProperty("object_name") val object_name: String?,
+        @JsonProperty("used_slug") val used_slug: String?,
+        @JsonProperty("object_poster_url") val object_poster_url: String?,
+        @JsonProperty("object_back_url") val object_back_url: String?,
+        @JsonProperty("object_release_year") val object_release_year: String?,
+        @JsonProperty("object_language") val object_language: String?,
+        @JsonProperty("object_categories") val object_categories: String?,
+        @JsonProperty("object_related_imdb_point") val object_related_imdb_point: String?
+    )
 
     private fun Element.toSearchResult(): SearchResponse? {
         val title     = this.selectFirst("div.title a")?.text() ?: return null
@@ -718,8 +913,8 @@ class Dizipal : MainAPI() {
 
     // ADIM -1: HTML'den şifreli veriyi çıkar
     private suspend fun extractEncryptedDataFromUrl(url: String): EncryptedData? {
-        try {
-            val document = app.get(url).document
+        return try {
+            val document = app.get(url, interceptor = interceptor).document
             val html = document.html()
             
             // data-rm-k="true" attribute'una sahip elementten veriyi çıkar - Python'daki pattern'ler
@@ -761,19 +956,19 @@ class Dizipal : MainAPI() {
                             return EncryptedData(ciphertext, iv, salt)
                         }
                     }
-                } catch (e: Exception) {
-                    // JSON parse hatası - Python'da da try-except kullanıyor
-                }
+                    } catch (e: Exception) {
+                        // JSON parse hatası
+                    }
             }
+            null
         } catch (e: Exception) {
-            // Hata durumunda null dön
+            null
         }
-        return null
     }
 
     // ADIM 0: Şifreli veriyi decrypt et (PBKDF2-SHA512 + AES-CBC)
     private fun decryptIframeUrl(encryptedData: EncryptedData): String? {
-        try {
+        return try {
             // Hex string'leri byte array'e çevir
             val saltBytes = hexStringToByteArray(encryptedData.salt)
             val ivBytes = hexStringToByteArray(encryptedData.iv)
@@ -792,13 +987,13 @@ class Dizipal : MainAPI() {
             val iframeUrl = String(decrypted, Charsets.UTF_8).trim()
             
             // URL'i düzelt
-            return when {
+            when {
                 iframeUrl.startsWith("//") -> "https:$iframeUrl"
                 iframeUrl.startsWith("http") -> iframeUrl
                 else -> "https://$iframeUrl"
             }
         } catch (e: Exception) {
-            return null
+            null
         }
     }
 
@@ -814,9 +1009,60 @@ class Dizipal : MainAPI() {
         return data
     }
 
+    // M3U8 URL'ini düzelt (protokol ve escape karakterleri)
+    private fun fixM3u8Url(url: String, iframeUrl: String): String {
+        var fixed = url.trim()
+        
+        // Önce tüm escape karakterlerini temizle
+        fixed = fixed
+            .replace("\\/", "/")
+            .replace("\\u0026", "&")
+            .replace("\\u003d", "=")
+            .replace("\\u003f", "?")
+            .replace("\\\\\"", "\"")
+            .replace("\\\\", "")
+            .replace("\\", "")
+            .replace("\"", "")
+            .replace("'", "")
+        
+        // Protokol kontrolü
+        when {
+            fixed.startsWith("//") -> fixed = "https:$fixed"
+            !fixed.startsWith("http") -> {
+                // Eğer relative URL ise, iframe domain'inden tamamla
+                if (fixed.startsWith("/")) {
+                    // Absolute path - domain ekle
+                    try {
+                        val iframeDomain = URL(iframeUrl).let { "${it.protocol}://${it.host}" }
+                        fixed = "$iframeDomain$fixed"
+                    } catch (e: Exception) {
+                        // Eğer iframe URL parse edilemezse, mainUrl kullan
+                        val baseUrl = mainUrl.replace(Regex("/$"), "")
+                        fixed = "$baseUrl$fixed"
+                    }
+                } else {
+                    // Relative path - iframe URL'inin base'ini kullan
+                    try {
+                        val iframeBase = URL(iframeUrl).let { "${it.protocol}://${it.host}${it.path.substringBeforeLast("/")}" }
+                        fixed = "$iframeBase/$fixed"
+                    } catch (e: Exception) {
+                        fixed = "https://$fixed"
+                    }
+                }
+            }
+        }
+        
+        // URL'in geçerli olduğunu kontrol et
+        if (!fixed.contains("://")) {
+            fixed = "https://$fixed"
+        }
+        
+        return fixed
+    }
+
     // ADIM 1: iframe URL'inden player URL çıkar
     private suspend fun getPlayerUrl(iframeUrl: String): String? {
-        try {
+        return try {
             val headers = mapOf(
                 "Referer" to "${mainUrl}/",
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
@@ -832,13 +1078,20 @@ class Dizipal : MainAPI() {
             val response = app.get(iframeUrl, headers = headers, interceptor = interceptor)
             val html = response.text
             
-            // window.openPlayer() içinden player URL çıkar - Python'daki pattern'ler
-            var match = Regex("""window\.openPlayer\(['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE).find(html)
+            // window.openPlayer() içinden player URL çıkar - bak.py'deki pattern
+            // Önce tek tırnak ile dene (bak.py'de bu kullanılıyor)
+            var match = Regex("""window\.openPlayer\('([^']+)'""", RegexOption.IGNORE_CASE).find(html)
             if (match != null) {
                 return match.groupValues[1]
             }
             
-            // Alternatif pattern'ler (Python kodundan)
+            // Çift tırnak ile dene
+            match = Regex("""window\.openPlayer\(["']([^"']+)["']""", RegexOption.IGNORE_CASE).find(html)
+            if (match != null) {
+                return match.groupValues[1]
+            }
+            
+            // Alternatif pattern'ler
             val altPatterns = listOf(
                 Regex("""openPlayer\(['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE),
                 Regex("""player.*?['"]([^'"]+source2[^'"]+)['"]""", RegexOption.IGNORE_CASE),
@@ -852,15 +1105,15 @@ class Dizipal : MainAPI() {
                 }
             }
             
-            return null
+            null
         } catch (e: Exception) {
-            return null
+            null
         }
     }
 
     // ADIM 2: source2.php'den M3U8 URL çıkar
     private suspend fun getM3u8Url(playerUrl: String, iframeUrl: String): String? {
-        try {
+        return try {
             val url = URL(iframeUrl)
             val mainDomain = "${url.protocol}://${url.host}"
             val source2Url = "$mainDomain$SOURCE2_PATH$playerUrl"
@@ -892,19 +1145,24 @@ class Dizipal : MainAPI() {
                 Regex("""file["']?\s*:\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)  // Alternatif quotes
             )
             
-            for (pattern in patterns) {
+                for (pattern in patterns) {
                 val match = pattern.find(html)
                 if (match != null) {
                     var m3u8Url = match.groupValues[1]
-                    // Python'daki gibi escape karakterlerini temizle
-                    m3u8Url = m3u8Url.replace("\\/", "/")
+                    // bak.py'deki gibi escape karakterlerini temizle
+                    m3u8Url = m3u8Url
+                        .replace("\\/", "/")
                         .replace("\\u0026", "&")
+                        .replace("\\u003d", "=")
+                        .replace("\\u003f", "?")
                         .replace("\\\\\"", "\"")
                         .replace("\\\\", "")
-                        .replace("\\", "")
+                        .replace("\\", "")  // Tüm backslash'leri kaldır (bak.py'deki gibi)
+                        .trim()
                     
-                    // M3U8 kontrolü
-                    if (m3u8Url.contains(".m3u8", ignoreCase = true)) {
+                    // M3U8 kontrolü - bak.py'de direkt döndürüyor
+                    if (m3u8Url.isNotEmpty() && m3u8Url.startsWith("http")) {
+                        // Direkt URL'i döndür (m.php veya .m3u8 fark etmez)
                         return m3u8Url
                     }
                 }
@@ -912,54 +1170,88 @@ class Dizipal : MainAPI() {
             
             // Direkt M3U8 URL regex (Python'daki son pattern)
             val m3u8Match = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""", RegexOption.IGNORE_CASE).find(html)
-            return m3u8Match?.groupValues?.get(0)
+            m3u8Match?.groupValues?.get(0)?.trim()?.takeIf { it.isNotEmpty() }
         } catch (e: Exception) {
-            // Hata durumunda null dön
+            null
         }
-        return null
     }
 
     override suspend fun loadLinks(data: String, isCasting: Boolean, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
-        // ADIM -1: Şifreli veriyi çıkar
-        val encryptedData = extractEncryptedDataFromUrl(data)
-        if (encryptedData == null) {
-            // Fallback: Eski yöntemle iframe ara
-            return loadLinksFallback(data, subtitleCallback, callback)
-        }
-
-        // ADIM 0: iframe URL'ini decrypt et
-        val iframeUrl = decryptIframeUrl(encryptedData)
-        if (iframeUrl == null) {
-            return loadLinksFallback(data, subtitleCallback, callback)
-        }
-
-        // ÖNEMLİ: iframe URL'ini önce direkt extractor'a gönder (hemen çalışsın)
-        // Extractors daha iyi sonuç verebilir veya alternatif formatlar bulabilir
-        loadExtractor(iframeUrl, "${mainUrl}/", subtitleCallback, callback)
-
-        // ADIM 1: Player URL'i çıkar
-        val playerUrl = getPlayerUrl(iframeUrl)
+        var foundAnyLink = false
         
-        // ADIM 2: M3U8 URL'i çıkar (direkt stream URL)
-        if (playerUrl != null) {
-            val m3u8Url = getM3u8Url(playerUrl, iframeUrl)
-            if (m3u8Url != null && m3u8Url.isNotEmpty()) {
-                callback.invoke(
-                    newExtractorLink(
-                        source = name,
-                        name = name,
-                        url = m3u8Url,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.headers = mapOf("Referer" to iframeUrl)
-                        this.quality = Qualities.Unknown.value
-                    }
-                )
+        try {
+            // ADIM -1: Şifreli veriyi çıkar
+            val encryptedData = extractEncryptedDataFromUrl(data)
+            if (encryptedData == null) {
+                // Fallback: Eski yöntemle iframe ara
+                return loadLinksFallback(data, subtitleCallback, callback)
             }
+
+            // ADIM 0: iframe URL'ini decrypt et
+            val iframeUrl = decryptIframeUrl(encryptedData)
+            if (iframeUrl == null) {
+                return loadLinksFallback(data, subtitleCallback, callback)
+            }
+
+            // ÖNEMLİ: iframe URL'ini önce direkt extractor'a gönder (hemen çalışsın)
+            // Extractors daha iyi sonuç verebilir veya alternatif formatlar bulabilir
+            // Referer olarak orijinal sayfa URL'ini (data) kullan - extractor'lar buna ihtiyaç duyuyor
+            try {
+                val extractorResult = loadExtractor(iframeUrl, data, subtitleCallback) { link ->
+                    // Extractor başarılı oldu, callback'i çağır
+                    callback(link)
+                    foundAnyLink = true
+                }
+                // Extractor eşleşti ama callback çağrılmadıysa (async), devam et
+            } catch (e: Exception) {
+                // Extractor hatası, devam et
+            }
+
+            // ADIM 1: Player URL'i çıkar
+            val playerUrl = getPlayerUrl(iframeUrl)
+            
+            // ADIM 2: M3U8 URL'i çıkar (direkt stream URL)
+            if (playerUrl != null) {
+                val m3u8Url = getM3u8Url(playerUrl, iframeUrl)
+                if (m3u8Url != null && m3u8Url.isNotEmpty()) {
+                    // M3U8 URL'ini düzelt (escape karakterleri ve protokol kontrolü)
+                    val fixedM3u8Url = fixM3u8Url(m3u8Url, iframeUrl)
+                    
+                    // URL'in geçerli olduğunu kontrol et
+                    if (fixedM3u8Url.isNotEmpty() && (fixedM3u8Url.startsWith("http://") || fixedM3u8Url.startsWith("https://"))) {
+                        callback.invoke(
+                            newExtractorLink(
+                                source = name,
+                                name = name,
+                                url = fixedM3u8Url,
+                                type = ExtractorLinkType.M3U8
+                            ) {
+                                // Hem referer field'ını hem de headers'ı set et (best practice)
+                                this.referer = iframeUrl
+                                this.headers = mapOf(
+                                    "Referer" to iframeUrl,
+                                    "User-Agent" to USER_AGENT,
+                                    "Accept" to "*/*",
+                                    "Accept-Language" to "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"
+                                )
+                                this.quality = Qualities.Unknown.value
+                            }
+                        )
+                        foundAnyLink = true
+                    }
+                }
+            }
+            
+            // Eğer hala link bulunamadıysa ve extractor da başarısız olduysa, fallback'i dene
+            if (!foundAnyLink) {
+                return loadLinksFallback(data, subtitleCallback, callback)
+            }
+            
+            return foundAnyLink
+        } catch (e: Exception) {
+            // Hata durumunda fallback'i dene
+            return loadLinksFallback(data, subtitleCallback, callback)
         }
-        
-        // Her durumda true dön - extractor'lar en azından bir şey bulmalı
-        return true
     }
 
     // Fallback: Eski iframe bulma yöntemi
@@ -1008,22 +1300,53 @@ class Dizipal : MainAPI() {
             }
 
             // Bulunan iframe'leri loadExtractor'a gönder
+            // Referer olarak orijinal sayfa URL'ini (data) kullan
             if (iframes.isNotEmpty()) {
+                var foundAny = false
                 for (iframe in iframes) {
                     if (iframe.isNotEmpty()) {
-                        loadExtractor(iframe, "${mainUrl}/", subtitleCallback, callback)
+                        try {
+                            val result = loadExtractor(iframe, data, subtitleCallback) { link ->
+                                callback(link)
+                                foundAny = true
+                            }
+                            // Extractor eşleştiyse true döner
+                            // Callback async çağrılabilir, bu yüzden foundAny kontrolü callback içinde yapılıyor
+                        } catch (e: Exception) {
+                            // Extractor hatası, devam et
+                        }
                     }
                 }
-                return true
+                // Eğer extractor eşleştiyse (result = true), callback muhtemelen çağrılacak
+                // Ama kesin olmadığı için foundAny kontrolü yapıyoruz
+                if (foundAny) return true
             }
 
             // Eğer hiç iframe bulunamazsa, sayfanın kendisini extractor'a gönder (son çare)
-            loadExtractor(data, "${mainUrl}/", subtitleCallback, callback)
-            return true
+            // Referer olarak kendisini kullan (data)
+            try {
+                var foundAny = false
+                val result = loadExtractor(data, data, subtitleCallback) { link ->
+                    callback(link)
+                    foundAny = true
+                }
+                // Extractor eşleştiyse callback muhtemelen çağrılacak
+                return foundAny || result
+            } catch (e: Exception) {
+                return false
+            }
         } catch (e: Exception) {
             // Hata durumunda da sayfayı extractor'a gönder
-            loadExtractor(data, "${mainUrl}/", subtitleCallback, callback)
-            return true
+            try {
+                var foundAny = false
+                val result = loadExtractor(data, data, subtitleCallback) { link ->
+                    callback(link)
+                    foundAny = true
+                }
+                return foundAny || result
+            } catch (e2: Exception) {
+                return false
+            }
         }
     }
 }
