@@ -1,5 +1,25 @@
 [
   {
+    "iconUrl": "https://www.google.com/s2/favicons?domain=dizi25.life&sz=%size%",
+    "apiVersion": 1,
+    "repositoryUrl": "https://github.com/ahmetokan0101/eklentilerim",
+    "fileSize": 21000,
+    "status": 1,
+    "language": "tr",
+    "authors": [
+      "movix"
+    ],
+    "tvTypes": [
+      "TvSeries",
+      "Movie"
+    ],
+    "version": 0,
+    "internalName": "Dizilife",
+    "description": "Dizi25.life sitemizde, donma yaşamadan Türkçe dublaj ve altyazılı filmleri ile dizileri muhteşem 1080p full HD kalitesinde izleyebilirsiniz.",
+    "url": "https://raw.githubusercontent.com/ahmetokan0101/eklentilerim/main/Dizilife.cs3",
+    "name": "Dizilife"
+  },
+  {
     "iconUrl": "https://www.google.com/s2/favicons?domain=dizilla.club&sz=%size%",
     "apiVersion": 1,
     "repositoryUrl": "https://github.com/ahmetokan0101/eklentilerim",
@@ -7,7 +27,7 @@
     "status": 1,
     "language": "tr",
     "authors": [
-      "keyiflerolsun"
+      "movix"
     ],
     "tvTypes": [
       "TvSeries"
@@ -26,7 +46,7 @@
     "status": 1,
     "language": "tr",
     "authors": [
-      "keyiflerolsun"
+      "movix"
     ],
     "tvTypes": [
       "TvSeries",
@@ -37,25 +57,5 @@
     "description": "DiziPal tüm yabancı dizileri ve filmleri ücretsiz olarak Türkçe Dublaj ve altyazılı seçenekleri ile 1080P kalite izleyebileceğiniz yeni nesil dizi ve film izleme siteniz. Geliştirilmiş film/dizi ayırt etme özelliği ile daha iyi sonuçlar sunar.",
     "url": "https://raw.githubusercontent.com/ahmetokan0101/eklentilerim/main/DiziPal.cs3",
     "name": "DiziPal"
-  },
-  {
-    "iconUrl": "https://www.google.com/s2/favicons?domain=dizi25.life&sz=%size%",
-    "apiVersion": 1,
-    "repositoryUrl": "https://github.com/ahmetokan0101/eklentilerim",
-    "fileSize": 21000,
-    "status": 1,
-    "language": "tr",
-    "authors": [
-      "keyiflerolsun"
-    ],
-    "tvTypes": [
-      "TvSeries",
-      "Movie"
-    ],
-    "version": 0,
-    "internalName": "Dizilife",
-    "description": "Dizi25.life sitemizde, donma yaşamadan Türkçe dublaj ve altyazılı filmleri ile dizileri muhteşem 1080p full HD kalitesinde izleyebilirsiniz.",
-    "url": "https://raw.githubusercontent.com/ahmetokan0101/eklentilerim/main/Dizilife.cs3",
-    "name": "Dizilife"
   }
 ]
