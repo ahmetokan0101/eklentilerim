@@ -10,6 +10,6 @@
 .cxx
 local.properties
 .vscode
-build_and_push.py
+b.py
 dizilifejava/
 dizipaljava/
