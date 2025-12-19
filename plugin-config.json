@@ -1,0 +1,7 @@
+{
+  "pluginUrl": "https://raw.githubusercontent.com/ahmetokan0101/eklentilerim/main/DiziPal.cs3",
+  "version": "1.0.0",
+  "fallbackUrls": [
+    "https://cdn.jsdelivr.net/gh/USER/REPO@main/plugin.cs3"
+  ]
+}
