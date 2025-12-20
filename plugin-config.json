@@ -1,7 +1,7 @@
 {
-  "pluginUrl": "https://raw.githubusercontent.com/ahmetokan0101/eklentilerim/main/DiziPal.cs3",
+  "pluginUrl": "https://raw.githubusercontent.com/ahmetokan0101/eklentilerim/main/DiziPas.cs3",
   "version": "1.0.0",
   "fallbackUrls": [
-    "https://cdn.jsdelivr.net/gh/USER/REPO@main/plugin.cs3"
+    "https://github.com/ahmetokan0101/eklentilerim/raw/refs/heads/main/DiziLife.cs3"
   ]
 }
