@@ -21,7 +21,7 @@ import org.json.JSONObject
 import kotlin.text.Charsets
 
 class Dizipal : MainAPI() {
-    override var mainUrl              = "https://dizipal1515.com/"
+    override var mainUrl              = "https://dizipal1521.com/"
     override var name                 = "Dizipal"
     override val hasMainPage          = true
     override var lang                 = "tr"

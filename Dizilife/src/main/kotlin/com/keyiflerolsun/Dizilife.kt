@@ -9,18 +9,41 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
+import com.lagradost.cloudstream3.network.CloudflareKiller
+import okhttp3.Interceptor
+import okhttp3.Response
+import org.jsoup.Jsoup
 import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 class Dizilife : MainAPI() {
-    override var mainUrl              = "https://dizi25.life"
+    override var mainUrl              = "https://dizi27.life"
     override var name                 = "Dizilife"
     override val hasMainPage          = true
     override var lang                 = "tr"
     override val hasQuickSearch       = false
     override val supportedTypes       = setOf(TvType.TvSeries, TvType.Movie)
+    
+    // Cloudflare Killer Sistemi
+    private val cloudflareKiller by lazy { CloudflareKiller() }
+    private val interceptor by lazy { CloudflareInterceptor(cloudflareKiller) }
+    
+    class CloudflareInterceptor(private val cloudflareKiller: CloudflareKiller): Interceptor {
+        override fun intercept(chain: Interceptor.Chain): Response {
+            val request = chain.request()
+            val response = chain.proceed(request)
+            
+            val doc = Jsoup.parse(response.peekBody(1024 * 1024).string())
+            
+            if (doc.html().contains("Just a moment")) {
+                return cloudflareKiller.intercept(chain)
+            }
+            
+            return response
+        }
+    }
 
     override val mainPage = mainPageOf(
         "${mainUrl}/tur/aksiyon/"     to "Aksiyon",
@@ -48,7 +71,7 @@ class Dizilife : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = if (page > 1) "${request.data}?page=$page&sort=popularity" else request.data
-        val document = app.get(url).document
+        val document = app.get(url, interceptor = interceptor).document
         val home     = document.select("div.content-card").mapNotNull { it.toMainPageResult() }
 
         return newHomePageResponse(request.name, home)
@@ -84,7 +107,7 @@ class Dizilife : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
-        val document = app.get("${mainUrl}/arama?q=${encodedQuery}").document
+        val document = app.get("${mainUrl}/arama?q=${encodedQuery}", interceptor = interceptor).document
 
         // Arama sonuçları da content-card yapısını kullanıyor olabilir
         val results = document.select("div.content-card").mapNotNull { it.toMainPageResult() }
@@ -123,7 +146,7 @@ class Dizilife : MainAPI() {
     override suspend fun quickSearch(query: String): List<SearchResponse> = search(query)
 
     override suspend fun load(url: String): LoadResponse? {
-        val document = app.get(url).document
+        val document = app.get(url, interceptor = interceptor).document
 
         val title           = document.selectFirst("h1.content-title")?.text()?.trim()
             ?: document.selectFirst("h1")?.text()?.trim() 
@@ -341,7 +364,7 @@ class Dizilife : MainAPI() {
 
     override suspend fun loadLinks(data: String, isCasting: Boolean, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
         Log.d("STF", "data » ${data}")
-        val document = app.get(data, referer = data).document
+        val document = app.get(data, referer = data, interceptor = interceptor).document
 
         val iframes = mutableListOf<String>()
 
@@ -528,7 +551,7 @@ class Dizilife : MainAPI() {
         val streamUrls = mutableListOf<String>()
         
         try {
-            val playerDoc = app.get(playerUrl, referer = playerUrl).document
+            val playerDoc = app.get(playerUrl, referer = playerUrl, interceptor = interceptor).document
             val scripts = playerDoc.select("script")
             
             for (script in scripts) {
