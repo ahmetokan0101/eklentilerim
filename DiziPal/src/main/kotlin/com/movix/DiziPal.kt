@@ -9,6 +9,7 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
+import com.movix.extractors.*
 import okhttp3.Interceptor
 import okhttp3.Response
 import org.jsoup.Jsoup
@@ -1258,6 +1259,108 @@ class Dizipal : MainAPI() {
             val iframeUrl = decryptIframeUrl(encryptedData)
             if (iframeUrl == null) {
                 return loadLinksFallback(data, subtitleCallback, callback)
+            }
+
+            // ContentX ve varyantları extractor'larını dene
+            try {
+                when {
+                    iframeUrl.contains("contentx.me", ignoreCase = true) -> {
+                        ContentX().getUrl(iframeUrl, data, subtitleCallback, callback)
+                        foundAnyLink = true
+                    }
+                    iframeUrl.contains("four.contentx.me", ignoreCase = true) -> {
+                        FourCX().getUrl(iframeUrl, data, subtitleCallback, callback)
+                        foundAnyLink = true
+                    }
+                    iframeUrl.contains("dplayer82.site", ignoreCase = true) -> {
+                        when {
+                            iframeUrl.contains("org.dplayer82.site", ignoreCase = true) -> {
+                                ORGDplayer().getUrl(iframeUrl, data, subtitleCallback, callback)
+                            }
+                            iframeUrl.contains("four.dplayer82.site", ignoreCase = true) -> {
+                                FourDplayer().getUrl(iframeUrl, data, subtitleCallback, callback)
+                            }
+                            else -> {
+                                Dplayer().getUrl(iframeUrl, data, subtitleCallback, callback)
+                            }
+                        }
+                        foundAnyLink = true
+                    }
+                    iframeUrl.contains("donilasplay.com", ignoreCase = true) -> {
+                        DonilasPlay().getUrl(iframeUrl, data, subtitleCallback, callback)
+                        foundAnyLink = true
+                    }
+                    iframeUrl.contains("pichive.online", ignoreCase = true) -> {
+                        when {
+                            iframeUrl.contains("four.pichive.online", ignoreCase = true) -> {
+                                FourPichive().getUrl(iframeUrl, data, subtitleCallback, callback)
+                            }
+                            else -> {
+                                Pichive().getUrl(iframeUrl, data, subtitleCallback, callback)
+                            }
+                        }
+                        foundAnyLink = true
+                    }
+                    iframeUrl.contains("playru.net", ignoreCase = true) -> {
+                        when {
+                            iframeUrl.contains("four.playru.net", ignoreCase = true) -> {
+                                FourPlayRu().getUrl(iframeUrl, data, subtitleCallback, callback)
+                            }
+                            else -> {
+                                PlayRu().getUrl(iframeUrl, data, subtitleCallback, callback)
+                            }
+                        }
+                        foundAnyLink = true
+                    }
+                    iframeUrl.contains("hotlinger.com", ignoreCase = true) -> {
+                        Hotlinger().getUrl(iframeUrl, data, subtitleCallback, callback)
+                        foundAnyLink = true
+                    }
+                    iframeUrl.contains("hotstream.club", ignoreCase = true) -> {
+                        HotStreamExtractor().getUrl(iframeUrl, data, subtitleCallback, callback)
+                        foundAnyLink = true
+                    }
+                    iframeUrl.contains("rapidvid.net", ignoreCase = true) -> {
+                        RapidVid().getUrl(iframeUrl, data, subtitleCallback, callback)
+                        foundAnyLink = true
+                    }
+                    iframeUrl.contains("sn.dplayer82.site", ignoreCase = true) -> {
+                        SNDplayer().getUrl(iframeUrl, data, subtitleCallback, callback)
+                        foundAnyLink = true
+                    }
+                    iframeUrl.contains("sobreatsesuyp.com", ignoreCase = true) -> {
+                        Sobreatsesuyp().getUrl(iframeUrl, data, subtitleCallback, callback)
+                        foundAnyLink = true
+                    }
+                    iframeUrl.contains("trstx.org", ignoreCase = true) -> {
+                        TRsTX().getUrl(iframeUrl, data, subtitleCallback, callback)
+                        foundAnyLink = true
+                    }
+                    iframeUrl.contains("turbo.imgz.me", ignoreCase = true) -> {
+                        TurboImgz().getUrl(iframeUrl, data, subtitleCallback, callback)
+                        foundAnyLink = true
+                    }
+                    iframeUrl.contains("turkeyplayer.com", ignoreCase = true) -> {
+                        TurkeyPlayer().getUrl(iframeUrl, data, subtitleCallback, callback)
+                        foundAnyLink = true
+                    }
+                    iframeUrl.contains("vidmoly", ignoreCase = true) -> {
+                        when {
+                            iframeUrl.contains("vidmoly.to", ignoreCase = true) -> {
+                                VidMolyTo().getUrl(iframeUrl, data, subtitleCallback, callback)
+                            }
+                            else -> {
+                                VidMolyExtractor().getUrl(iframeUrl, data, subtitleCallback, callback)
+                            }
+                        }
+                        foundAnyLink = true
+                    }
+                    iframeUrl.contains("vidmoxy.com", ignoreCase = true) -> {
+                        VidMoxy().getUrl(iframeUrl, data, subtitleCallback, callback)
+                        foundAnyLink = true
+                    }
+                }
+            } catch (e: Exception) {
             }
 
             try {
