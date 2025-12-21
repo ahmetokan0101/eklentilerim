@@ -7,6 +7,8 @@ import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.network.CloudflareKiller
+import com.lagradost.cloudstream3.utils.AppUtils.parseJson
+import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import okhttp3.Interceptor
 import okhttp3.Response
 import org.jsoup.Jsoup
@@ -26,7 +28,7 @@ class Dizipal : MainAPI() {
     override val hasMainPage          = true
     override var lang                 = "tr"
     override val hasQuickSearch       = false
-    override val supportedTypes       = setOf(TvType.Movie, TvType.TvSeries)
+    override val supportedTypes       = setOf(TvType.Movie, TvType.TvSeries, TvType.Live)
 
     override var sequentialMainPage = true
     override var sequentialMainPageDelay = 150L
@@ -88,6 +90,9 @@ class Dizipal : MainAPI() {
         }
     }
 
+    // M3U Playlist URL (NeonSpor'dan)
+    private val m3uPlaylistUrl = "https://raw.githubusercontent.com/primatzeka/kurbaga/main/NeonSpor/NeonSpor.m3u"
+    
     override val mainPage = mainPageOf(
         "${mainUrl}"                to "Öne Çıkanlar",
         "kategori:bilim-kurgu"      to "Bilim Kurgu",
@@ -104,15 +109,22 @@ class Dizipal : MainAPI() {
         "kategori:fantastik"        to "Fantastik",
         "kategori:gizem"            to "Gizem",
         "kategori:suc"              to "Suç",
-        "kategori:biyografi"        to "Biyografi"
+        "kategori:biyografi"        to "Biyografi",
+        // === CANLI TV KATEGORİLERİ (M3U) ===
+        "m3u:all"                   to "📺 Tüm Canlı Kanallar"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = request.data.trimEnd('/')
         
         val isHomePage = request.name == "Öne Çıkanlar"
-        
         val isKategoriPage = url.startsWith("kategori:")
+        val isM3uPage = url.startsWith("m3u:")
+        
+        // === M3U CANLI TV KATEGORİLERİ ===
+        if (isM3uPage) {
+            return getM3uMainPage(url, request.name, page)
+        }
         
         if (isHomePage && page > 1) {
             return newHomePageResponse(request.name, emptyList())
@@ -293,6 +305,143 @@ class Dizipal : MainAPI() {
         @JsonProperty("html") val html: String? = null
     )
 
+    // ========== M3U CANLI TV FONKSİYONLARI ==========
+    
+    /**
+     * M3U kategorilerini işler ve canlı TV kanallarını döndürür
+     */
+    private suspend fun getM3uMainPage(url: String, categoryName: String, page: Int): HomePageResponse {
+        try {
+            // M3U içeriğini çek
+            val m3uContent = app.get(m3uPlaylistUrl).text
+            val parser = IptvPlaylistParser()
+            val playlist = parser.parseM3U(m3uContent)
+            
+            val kategoriKey = url.substringAfter("m3u:")
+            
+            // Tüm kanallar
+            if (kategoriKey == "all") {
+                // Gruplara göre ayır
+                val grouped = playlist.items.groupBy { it.attributes["group-title"] }
+                
+                return newHomePageResponse(
+                    grouped.map { (groupName, channels) ->
+                        val title = groupName ?: "Diğer"
+                        val items = channels.mapNotNull { kanal ->
+                            kanal.toM3uSearchResponse()
+                        }
+                        HomePageList(title, items, isHorizontalImages = true)
+                    },
+                    hasNext = false
+                )
+            }
+            
+            // Belirli bir grup
+            val filteredChannels = playlist.items.filter { 
+                it.attributes["group-title"] == kategoriKey 
+            }.mapNotNull { it.toM3uSearchResponse() }
+            
+            return newHomePageResponse(categoryName, filteredChannels, hasNext = false)
+            
+        } catch (e: Exception) {
+            return newHomePageResponse(categoryName, emptyList(), hasNext = false)
+        }
+    }
+    
+    /**
+     * PlaylistItem'ı SearchResponse'a çevirir
+     */
+    private fun PlaylistItem.toM3uSearchResponse(): LiveSearchResponse? {
+        val streamUrl = this.url ?: return null
+        val channelName = this.title ?: return null
+        val posterUrl = this.attributes["tvg-logo"]
+        val group = this.attributes["group-title"] ?: ""
+        val nation = this.attributes["tvg-country"] ?: ""
+        
+        // LoadData'yı JSON olarak encode et
+        val loadData = M3uLoadData(streamUrl, channelName, posterUrl, group, nation, this.headers, this.userAgent)
+        
+        return newLiveSearchResponse(
+            channelName,
+            loadData.toJson(),
+            TvType.Live
+        ) {
+            this.posterUrl = posterUrl
+            this.lang = nation
+        }
+    }
+    
+    /**
+     * M3U kanalı için load response oluşturur
+     */
+    private suspend fun loadM3uChannel(data: String): LoadResponse? {
+        try {
+            val loadData = parseJson<M3uLoadData>(data)
+            
+            val nation = if (loadData.group == "NSFW") {
+                "⚠️🔞🔞🔞 » ${loadData.group} | ${loadData.nation} « 🔞🔞🔞⚠️"
+            } else {
+                "» ${loadData.group} | ${loadData.nation} «"
+            }
+            
+            // Aynı gruptaki kanalları recommendations olarak ekle
+            val m3uContent = app.get(m3uPlaylistUrl).text
+            val parser = IptvPlaylistParser()
+            val playlist = parser.parseM3U(m3uContent)
+            
+            val recommendations = playlist.items
+                .filter { it.attributes["group-title"] == loadData.group && it.title != loadData.title }
+                .take(10)
+                .mapNotNull { it.toM3uSearchResponse() }
+            
+            return newLiveStreamLoadResponse(loadData.title, loadData.url, data) {
+                this.posterUrl = loadData.poster
+                this.plot = nation
+                this.tags = listOf(loadData.group, loadData.nation)
+                this.recommendations = recommendations
+            }
+        } catch (e: Exception) {
+            return null
+        }
+    }
+    
+    /**
+     * M3U stream linklerini yükler
+     */
+    private suspend fun loadM3uLinks(data: String, callback: (ExtractorLink) -> Unit): Boolean {
+        try {
+            val loadData = parseJson<M3uLoadData>(data)
+            
+            callback.invoke(
+                ExtractorLink(
+                    source = name,
+                    name = "$name - ${loadData.title}",
+                    url = loadData.url,
+                    referer = loadData.headers["referrer"] ?: "",
+                    quality = Qualities.Unknown.value,
+                    type = ExtractorLinkType.M3U8,
+                    headers = loadData.headers
+                )
+            )
+            
+            return true
+        } catch (e: Exception) {
+            return false
+        }
+    }
+    
+    /**
+     * M3U kanal verisi için data class
+     */
+    data class M3uLoadData(
+        val url: String,
+        val title: String,
+        val poster: String?,
+        val group: String,
+        val nation: String,
+        val headers: Map<String, String> = emptyMap(),
+        val userAgent: String? = null
+    )
     private fun Element.toTrendResult(): SearchResponse? {
         val aTag = this.selectFirst("a") ?: return null
         var rawHref = aTag.attr("href")
@@ -573,6 +722,16 @@ class Dizipal : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
+        // M3U kanalı mı kontrol et
+        if (url.startsWith("{")) {
+            return try {
+                val loadData = parseJson<M3uLoadData>(url)
+                loadM3uChannel(url)
+            } catch (e: Exception) {
+                null
+            }
+        }
+        
         val document = app.get(url).document
 
         val title = document.selectFirst("h1")?.text()?.trim() ?: return null
@@ -1079,6 +1238,15 @@ class Dizipal : MainAPI() {
     }
 
     override suspend fun loadLinks(data: String, isCasting: Boolean, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
+        // M3U kanalı mı kontrol et
+        if (data.startsWith("{")) {
+            return try {
+                loadM3uLinks(data, callback)
+            } catch (e: Exception) {
+                false
+            }
+        }
+        
         var foundAnyLink = false
         
         try {
