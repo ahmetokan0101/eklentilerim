@@ -12,7 +12,7 @@
       "enabled": true
     },
     {
-      "id": "Maç",
+      "id": "Mac",
       "name": "Mac",
       "pluginUrl": "https://raw.githubusercontent.com/sarapcanagii/Pitipitii/builds/NeonSpor.cs3",
       "version": "1.0.1",
